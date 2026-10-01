@@ -1,0 +1,12 @@
+# Visual combat damage particle feedback style.
+# mob_default: Use entity's configured effect (blood for demons/humanoids, ichor for spiders, bone dust for skeletons).
+# blood: Crimson liquid droplets for flesh-based entities.
+# smoke: PG / family-friendly soot and dust puffs.
+# ichor: Toxic yellow-green insect fluid.
+# spectral: Dark purple and cyan ethereal spirit wisps.
+# sparks: Metallic impact sparks and embers.
+# none: Completely disable damage particles for minimal performance impact.
+x_mob_damage_particles (Damage particle effect) enum mob_default mob_default,blood,smoke,ichor,spectral,sparks,none
+
+# Multiplier for combat damage particle count (0.0 to 3.0).
+x_mob_damage_particle_multiplier (Damage particle density) float 1.0 0.0 3.0
