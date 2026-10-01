@@ -1,0 +1,86 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime": {
+    "version": "LuaJIT",
+    "pathStrict": true
+  },
+  "diagnostics": {
+    "enable": true,
+    "globals": [
+      "core",
+      "minetest",
+      "ItemStack",
+      "vector",
+      "PcgRandom",
+      "PseudoRandom",
+      "SecureRandom",
+      "DIR_DELIM",
+      "PLATFORM",
+      "dump",
+      "dump2",
+      "Raycast",
+      "Settings",
+      "AreaStore",
+      "VoxelManip",
+      "VoxelArea",
+      "PerlinNoise",
+      "PerlinNoiseMap",
+      "x_mob_core"
+    ],
+    "neededFileStatus": {
+      "codestyle-check": "Opened",
+      "param-type-mismatch": "Opened",
+      "assign-type-mismatch": "Opened"
+    },
+    "groupFileStatus": {
+      "ambiguity": "Opened",
+      "await": "Opened",
+      "type-check": "Any"
+    },
+    "ignoredFiles": "Disable",
+    "libraryFiles": "Disable",
+    "disableScheme": [
+      "git",
+      "bin"
+    ],
+    "disable": [
+      "codestyle-check",
+      "await-in-sync",
+      "redundant-return-value",
+      "undefined-doc-param",
+      "undefined-field",
+      "undefined-doc-name"
+    ]
+  },
+  "format": {
+    "enable": true,
+    "defaultConfig": {
+      "indent_style": "tab",
+      "tab_width": "4",
+      "continuation_indent": "2"
+    }
+  },
+  "workspace": {
+    "checkThirdParty": false,
+    "userThirdParty": [],
+    "useGitIgnore": true,
+    "ignoreSubmodules": true,
+    "maxPreload": 5000,
+    "preloadFileSize": 1000,
+    "ignoreDir": [
+      ".git",
+      "assets",
+      "scratch",
+      "scripts",
+      "test.lua",
+      "tests"
+    ],
+    "library": [
+      "/Applications/Luanti.app/Contents/Resources/builtin"
+    ]
+  },
+  "doc": {
+    "packageName": "x_mob_core"
+  },
+  "docScriptPath": "/scripts/doc_format.lua"
+}

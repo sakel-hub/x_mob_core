@@ -1,0 +1,20 @@
+{
+    "$schema": "https://content.luanti.org/api/cdb_schema/",
+    "type": "MOD",
+    "title": "X Mob Core",
+    "name": "x_mob_core",
+    "short_description": "High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luanti.",
+    "long_description": "A modular, zero-dependency mob engine and spawner framework for Luanti based on S.O.L.I.D. software architecture principles. Provides 3D A* hierarchical pathfinding, motor and steering controllers, glTF multi-track animation dispatching, combat and tool wear mechanics, multi-agent pack coordination, and dynamic natural mapgen and trickle spawning.",
+    "dev_state": "ACTIVELY_DEVELOPED",
+    "tags": [
+        "library",
+        "mobs",
+        "api",
+        "spawning",
+        "combat"
+    ],
+    "license": "MIT",
+    "repo": "https://github.com/sakel-hub/x_mob_core",
+    "issue_tracker": "https://github.com/sakel-hub/x_mob_core/issues",
+    "ai_disclosure": "ASSISTED"
+}

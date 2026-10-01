@@ -1,0 +1,38 @@
+{
+    "name": "x_mob_core",
+    "version": "1.0.0",
+    "description": "High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luanti.",
+    "main": "init.lua",
+    "type": "module",
+    "engines": {
+        "node": ">=16.0.0",
+        "npm": ">=8.0.0"
+    },
+    "scripts": {
+        "lint": "luacheck .",
+        "diagnostics": "lua-language-server --check=. --check_format=pretty",
+        "diagnostics:errors": "lua-language-server --check=. --checklevel=Error",
+        "check": "npm run lint && npm run diagnostics:errors",
+        "test": "npm run lint",
+        "test:perf": "lua test_multiplayer_perf.lua",
+        "doc": "mkdir -p doc_build && lua-language-server --doc=. --doc_out_path=doc_build --doc_format_path=scripts/doc_format.lua && cp doc_build/doc.md API.md && rm -rf doc_build",
+        "push:ci": "node ./scripts/deploy.mjs"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sakel-hub/x_mob_core.git"
+    },
+    "author": "SaKeL",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/sakel-hub/x_mob_core/issues"
+    },
+    "homepage": "https://github.com/sakel-hub/x_mob_core#readme",
+    "devDependencies": {
+        "node-fetch": "^3.3.2",
+        "yargs": "^17.7.2"
+    },
+    "dependencies": {
+        "dotenv": "^16.4.5"
+    }
+}
