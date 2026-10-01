@@ -277,14 +277,14 @@ npm run test:perf
 
 | Metric | Mobs Redo API (`mobs_redo`) | Creatura (`creatura`) | X Mob Core (`x_mob_core`) | Advantage / Improvement |
 |:---|:---|:---|:---|:---|
-| **Average Step Latency** | `1,634.1 µs/tick` | `985.9 µs/tick` | **`541.6 µs/tick`** | **3.02x faster** than Mobs Redo, **1.82x faster** than Creatura |
-| **Peak Tick Latency** | `3,049.0 µs` | `2,509.0 µs` | **`1,262.0 µs`** | **2.42x lower spikes**, preventing tick jitter |
+| **Average Step Latency** | `1,758.5 µs/tick` | `1,029.3 µs/tick` | **`553.3 µs/tick`** | **3.18x faster** than Mobs Redo, **1.86x faster** than Creatura |
+| **Peak Tick Latency** | `3,252.0 µs` | `2,739.0 µs` | **`1,033.0 µs`** | **3.15x lower spikes**, preventing tick jitter |
 | **Server TPS (20 Target)** | `20.0 TPS` | `20.0 TPS` | **`20.0 TPS`** | **98.9% tick headroom** |
-| **Max Capacity (15ms Budget)** | `~1,376 mobs` | `~2,282 mobs` | **`~4,154 mobs`** | **3.02x higher entity capacity** |
-| **Node / Map Queries** | `692,430 queries` | `84,059 queries` | **`8,013 queries`** | **98.84% reduction** in map queries |
-| **A\* Path Searches** | `17,284 searches` | `2,242 searches` | **`245 searches`** | **98.58% reduction** via Corridor LOS & LOD |
-| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`5,025 bypasses`** | Zero-overhead straight-line pursuit |
-| **Lua GC Memory Rate** | `12,337.1 KB/s` | `3,511.6 KB/s` | **`498.3 KB/s`** | **24.76x lower memory churn** |
-| **Network Egress Bandwidth** | `6,326.52 KB/s` | `6,423.44 KB/s` | **`5,518.72 KB/s`** | **12.8% to 14.1% bandwidth reduction** |
+| **Max Capacity (15ms Budget)** | `~1,279 mobs` | `~2,185 mobs` | **`~4,066 mobs`** | **3.18x higher entity capacity** |
+| **Node / Map Queries** | `709,518 queries` | `101,369 queries` | **`4,390 queries`** | **99.38% reduction** in map queries |
+| **A\* Path Searches** | `17,591 searches` | `2,841 searches` | **`146 searches`** | **99.17% reduction** via Corridor LOS & LOD |
+| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`4,908 bypasses`** | Zero-overhead straight-line pursuit |
+| **Lua GC Memory Rate** | `12,681.1 KB/s` | `4,070.8 KB/s` | **`392.6 KB/s`** | **32.30x lower memory churn** |
+| **Network Egress Bandwidth** | `6,348.56 KB/s` | `6,592.43 KB/s` | **`5,636.73 KB/s`** | **11.2% to 14.5% bandwidth reduction** |
 
 For complete multi-scenario tables (Concurrency Scaling, Entity Density, Obstacle Stress, and Distance LOD), see [benchmark_results.md](benchmark_results.md).

@@ -1,6 +1,6 @@
 # Luanti Mob Frameworks: Multiplayer Performance Benchmark Results
 
-> Generated on: 2026-10-01 17:18:45Z
+> Generated on: 2026-10-01 18:13:58Z
 
 
 ================================================================================
@@ -10,106 +10,106 @@
 --- [TABLE 1] CONCURRENCY SCALING (30 Mobs in Active Range) ---
 | Players      | Metric           | Mobs Redo API    | Creatura         | X Mob Core       |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 10 Players   | Avg Step Latency | 133.7 us/tick    | 155.8 us/tick    | 33.1 us/tick     |
-|              | Peak Tick Spike  | 246.0 us         | 284.0 us         | 104.0 us         |
+| 10 Players   | Avg Step Latency | 223.0 us/tick    | 110.0 us/tick    | 35.1 us/tick     |
+|              | Peak Tick Spike  | 361.0 us         | 289.0 us         | 167.0 us         |
 |              | Server TPS       | 20.0 TPS         | 20.0 TPS         | 20.0 TPS         |
-|              | Memory Growth    | 1143.7 KB/s      | 1766.4 KB/s      | 74.7 KB/s        |
+|              | Memory Growth    | 1950.4 KB/s      | 1077.1 KB/s      | 88.8 KB/s        |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 30 Players   | Avg Step Latency | 292.7 us/tick    | 195.5 us/tick    | 71.7 us/tick     |
-|              | Peak Tick Spike  | 494.0 us         | 474.0 us         | 235.0 us         |
+| 30 Players   | Avg Step Latency | 327.4 us/tick    | 180.8 us/tick    | 74.2 us/tick     |
+|              | Peak Tick Spike  | 544.0 us         | 462.0 us         | 266.0 us         |
 |              | Server TPS       | 20.0 TPS         | 20.0 TPS         | 20.0 TPS         |
-|              | Memory Growth    | 2456.0 KB/s      | 1711.6 KB/s      | 127.6 KB/s       |
+|              | Memory Growth    | 2645.3 KB/s      | 1310.7 KB/s      | 133.1 KB/s       |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 60 Players   | Avg Step Latency | 379.8 us/tick    | 233.5 us/tick    | 120.7 us/tick    |
-|              | Peak Tick Spike  | 605.0 us         | 501.0 us         | 327.0 us         |
+| 60 Players   | Avg Step Latency | 406.0 us/tick    | 226.4 us/tick    | 124.7 us/tick    |
+|              | Peak Tick Spike  | 579.0 us         | 493.0 us         | 272.0 us         |
 |              | Server TPS       | 20.0 TPS         | 20.0 TPS         | 20.0 TPS         |
-|              | Memory Growth    | 2994.5 KB/s      | 1187.2 KB/s      | 161.5 KB/s       |
+|              | Memory Growth    | 2997.9 KB/s      | 932.4 KB/s       | 151.7 KB/s       |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 100 Players  | Avg Step Latency | 446.5 us/tick    | 301.4 us/tick    | 179.9 us/tick    |
-|              | Peak Tick Spike  | 660.0 us         | 517.0 us         | 273.0 us         |
+| 100 Players  | Avg Step Latency | 470.0 us/tick    | 313.3 us/tick    | 178.3 us/tick    |
+|              | Peak Tick Spike  | 696.0 us         | 540.0 us         | 258.0 us         |
 |              | Server TPS       | 20.0 TPS         | 20.0 TPS         | 20.0 TPS         |
-|              | Memory Growth    | 3015.5 KB/s      | 734.5 KB/s       | 132.7 KB/s       |
+|              | Memory Growth    | 2996.8 KB/s      | 874.4 KB/s       | 113.8 KB/s       |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
 
 --- [TABLE 2] ENTITY DENSITY SCALING (30 Concurrent Players) ---
 | Mobs         | Metric           | Mobs Redo API    | Creatura         | X Mob Core       |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 25 Mobs      | Avg Step Latency | 254.2 us/tick    | 173.2 us/tick    | 59.4 us/tick     |
-|              | Node Queries     | 61819 queries    | 22019 queries    | 525 queries      |
-|              | A* Path Requests | 1534 reqs        | 689 reqs         | 15 reqs          |
-|              | Network Bandwidth | 532.75 KB/s      | 538.39 KB/s      | 425.56 KB/s      |
+| 25 Mobs      | Avg Step Latency | 277.8 us/tick    | 154.8 us/tick    | 59.0 us/tick     |
+|              | Node Queries     | 66175 queries    | 15152 queries    | 503 queries      |
+|              | A* Path Requests | 1712 reqs        | 513 reqs         | 17 reqs          |
+|              | Network Bandwidth | 596.61 KB/s      | 607.08 KB/s      | 534.44 KB/s      |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 50 Mobs      | Avg Step Latency | 443.6 us/tick    | 307.0 us/tick    | 109.4 us/tick    |
-|              | Node Queries     | 94770 queries    | 36566 queries    | 884 queries      |
-|              | A* Path Requests | 2458 reqs        | 1214 reqs        | 27 reqs          |
-|              | Network Bandwidth | 1007.23 KB/s     | 1157.39 KB/s     | 1011.23 KB/s     |
+| 50 Mobs      | Avg Step Latency | 469.4 us/tick    | 331.2 us/tick    | 113.1 us/tick    |
+|              | Node Queries     | 100118 queries   | 36173 queries    | 1068 queries     |
+|              | A* Path Requests | 2570 reqs        | 1150 reqs        | 34 reqs          |
+|              | Network Bandwidth | 1234.17 KB/s     | 1169.50 KB/s     | 813.05 KB/s      |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 100 Mobs     | Avg Step Latency | 895.1 us/tick    | 649.6 us/tick    | 206.5 us/tick    |
-|              | Node Queries     | 200336 queries   | 76346 queries    | 1385 queries     |
-|              | A* Path Requests | 5440 reqs        | 2715 reqs        | 48 reqs          |
-|              | Network Bandwidth | 1809.54 KB/s     | 2623.51 KB/s     | 1896.71 KB/s     |
+| 100 Mobs     | Avg Step Latency | 898.0 us/tick    | 676.8 us/tick    | 221.6 us/tick    |
+|              | Node Queries     | 185490 queries   | 78664 queries    | 1492 queries     |
+|              | A* Path Requests | 4969 reqs        | 2549 reqs        | 55 reqs          |
+|              | Network Bandwidth | 2141.99 KB/s     | 2381.10 KB/s     | 1880.38 KB/s     |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| 200 Mobs     | Avg Step Latency | 1901.3 us/tick   | 1266.4 us/tick   | 419.4 us/tick    |
-|              | Node Queries     | 443020 queries   | 131379 queries   | 3452 queries     |
-|              | A* Path Requests | 11540 reqs       | 4359 reqs        | 128 reqs         |
-|              | Network Bandwidth | 4288.48 KB/s     | 4678.73 KB/s     | 3576.61 KB/s     |
+| 200 Mobs     | Avg Step Latency | 2040.6 us/tick   | 1389.5 us/tick   | 443.3 us/tick    |
+|              | Node Queries     | 443822 queries   | 151043 queries   | 3745 queries     |
+|              | A* Path Requests | 11293 reqs       | 4735 reqs        | 138 reqs         |
+|              | Network Bandwidth | 4554.35 KB/s     | 4368.29 KB/s     | 3710.68 KB/s     |
 |:-------------|:-----------------|:-----------------|:-----------------|:-----------------|
 
 --- [TABLE 3] OBSTACLE & PATHFINDING STRESS (50 Mobs, 30 Players) ---
 | Environment      | Metric           | Mobs Redo API    | Creatura         | X Mob Core       |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| Open Field       | Step Latency     | 178.6 us/tick    | 197.8 us/tick    | 200.4 us/tick    |
-|                  | Raycast Probes   | 2110 casts       | 2610 casts       | 1565 casts       |
+| Open Field       | Step Latency     | 213.3 us/tick    | 214.5 us/tick    | 270.5 us/tick    |
+|                  | Raycast Probes   | 2473 casts       | 2996 casts       | 1643 casts       |
 |                  | A* Invocations   | 0 searches       | 0 searches       | 0 searches       |
-|                  | Corridor Bypass  | 0 (N/A)          | 0 (N/A)          | 2074 bypasses    |
+|                  | Corridor Bypass  | 0 (N/A)          | 0 (N/A)          | 2174 bypasses    |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| Obstacle Maze    | Step Latency     | 355.9 us/tick    | 264.4 us/tick    | 96.8 us/tick     |
-|                  | Raycast Probes   | 2330 casts       | 2144 casts       | 667 casts        |
-|                  | A* Invocations   | 2019 searches    | 909 searches     | 11 searches      |
-|                  | Corridor Bypass  | 0 (N/A)          | 0 (N/A)          | 404 bypasses     |
+| Obstacle Maze    | Step Latency     | 289.4 us/tick    | 251.1 us/tick    | 95.7 us/tick     |
+|                  | Raycast Probes   | 1885 casts       | 2120 casts       | 184 casts        |
+|                  | A* Invocations   | 1409 searches    | 751 searches     | 7 searches       |
+|                  | Corridor Bypass  | 0 (N/A)          | 0 (N/A)          | 40 bypasses      |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
 
 --- [TABLE 4] MULTIPLAYER DISTANCE LOD IMPACT (60 Mobs, 50 Players) ---
 | Distribution     | Metric           | Mobs Redo API    | Creatura         | X Mob Core       |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| Clustered Hub    | Step Latency     | 507.1 us/tick    | 449.3 us/tick    | 171.7 us/tick    |
-|                  | A* Path Requests | 2541 reqs        | 1282 reqs        | 23 reqs          |
-|                  | LOD Pauses       | 0 (No LOD)       | 0 (No LOD)       | 10 paused        |
+| Clustered Hub    | Step Latency     | 515.3 us/tick    | 435.4 us/tick    | 182.8 us/tick    |
+|                  | A* Path Requests | 2393 reqs        | 1218 reqs        | 26 reqs          |
+|                  | LOD Pauses       | 0 (No LOD)       | 0 (No LOD)       | 0 paused         |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
-| Dispersed Map    | Step Latency     | 625.6 us/tick    | 429.5 us/tick    | 184.5 us/tick    |
-|                  | A* Path Requests | 3322 reqs        | 1122 reqs        | 28 reqs          |
-|                  | LOD Pauses       | 0 (No LOD)       | 0 (No LOD)       | 95 paused        |
+| Dispersed Map    | Step Latency     | 665.0 us/tick    | 467.0 us/tick    | 182.5 us/tick    |
+|                  | A* Path Requests | 3132 reqs        | 1374 reqs        | 16 reqs          |
+|                  | LOD Pauses       | 0 (No LOD)       | 0 (No LOD)       | 20 paused        |
 |:-----------------|:-----------------|:-----------------|:-----------------|:-----------------|
 
 --- [TABLE 5] EXTREME MOB SURGE STRESS TEST (150 Mobs, 60 Players, 200 Ticks) ---
 | Metric                   | Mobs Redo API    | Creatura         | X Mob Core       |
 |:-------------------------|:-----------------|:-----------------|:-----------------|
-| Average Step Latency     | 1634.1 us/tick   | 985.9 us/tick    | 541.6 us/tick    |
-| Peak Tick Latency        | 3049.0 us        | 2509.0 us        | 1262.0 us        |
+| Average Step Latency     | 1758.5 us/tick   | 1029.3 us/tick   | 553.3 us/tick    |
+| Peak Tick Latency        | 3252.0 us        | 2739.0 us        | 1033.0 us        |
 | Server TPS (20 Target)   | 20.0 TPS         | 20.0 TPS         | 20.0 TPS         |
 | Frame Overruns (>50ms)   | 0 ticks          | 0 ticks          | 0 ticks          |
-| TPS Headroom (Budget)    | 96.7%            | 98.0%            | 98.9%            |
-| Max Mobs (15ms Budget)   | ~1376 mobs       | ~2282 mobs       | ~4154 mobs       |
-| Node & Map Queries       | 692430 queries   | 84059 queries    | 8013 queries     |
+| TPS Headroom (Budget)    | 96.5%            | 97.9%            | 98.9%            |
+| Max Mobs (15ms Budget)   | ~1279 mobs       | ~2185 mobs       | ~4066 mobs       |
+| Node & Map Queries       | 709518 queries   | 101369 queries   | 4390 queries     |
 | Spatial Radius Scans     | 1500 scans       | 2700 scans       | 836 scans        |
-| A* Path Searches         | 17284 searches   | 2242 searches    | 245 searches     |
-| Corridor Bypasses        | 0 (N/A)          | 0 (N/A)          | 5025 bypasses    |
-| Memory Allocation Rate   | 12337.1 KB/s     | 3511.6 KB/s      | 498.3 KB/s       |
-| Network Bandwidth        | 6326.52 KB/s     | 6423.44 KB/s     | 5518.72 KB/s     |
+| A* Path Searches         | 17591 searches   | 2841 searches    | 146 searches     |
+| Corridor Bypasses        | 0 (N/A)          | 0 (N/A)          | 4908 bypasses    |
+| Memory Allocation Rate   | 12681.1 KB/s     | 4070.8 KB/s      | 392.6 KB/s       |
+| Network Bandwidth        | 6348.56 KB/s     | 6592.43 KB/s     | 5636.73 KB/s     |
 |:-------------------------|:-----------------|:-----------------|:-----------------|
 
 --- [SUMMARY] PERFORMANCE ADVANTAGE & HEADROOM ---
 | Metric | Mobs Redo API (`mobs_redo`) | Creatura (`creatura`) | X Mob Core (`x_mob_core`) | Advantage / Improvement |
 |:---|:---|:---|:---|:---|
-| **Average Step Latency** | `1634.1 µs/tick` | `985.9 µs/tick` | **`541.6 µs/tick`** | **3.02x faster** than Mobs Redo, **1.82x faster** than Creatura |
-| **Peak Tick Latency** | `3049.0 µs` | `2509.0 µs` | **`1262.0 µs`** | **2.42x lower spikes**, preventing tick jitter |
+| **Average Step Latency** | `1758.5 µs/tick` | `1029.3 µs/tick` | **`553.3 µs/tick`** | **3.18x faster** than Mobs Redo, **1.86x faster** than Creatura |
+| **Peak Tick Latency** | `3252.0 µs` | `2739.0 µs` | **`1033.0 µs`** | **3.15x lower spikes**, preventing tick jitter |
 | **Server TPS (20 Target)** | `20.0 TPS` | `20.0 TPS` | **`20.0 TPS`** | **98.9% tick headroom** |
-| **Max Capacity (15ms Budget)** | `~1376 mobs` | `~2282 mobs` | **`~4154 mobs`** | **3.02x higher entity capacity** |
-| **Node / Map Queries** | `692430 queries` | `84059 queries` | **`8013 queries`** | **98.84% reduction** in map queries |
-| **A\* Path Searches** | `17284 searches` | `2242 searches` | **`245 searches`** | **98.58% reduction** via Corridor LOS & LOD |
-| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`5025 bypasses`** | Zero-overhead straight-line pursuit |
-| **Lua GC Memory Rate** | `12337.1 KB/s` | `3511.6 KB/s` | **`498.3 KB/s`** | **24.76x lower memory churn** |
-| **Network Egress Bandwidth** | `6326.52 KB/s` | `6423.44 KB/s` | **`5518.72 KB/s`** | **12.8% to 14.1% bandwidth reduction** |
+| **Max Capacity (15ms Budget)** | `~1279 mobs` | `~2185 mobs` | **`~4066 mobs`** | **3.18x higher entity capacity** |
+| **Node / Map Queries** | `709518 queries` | `101369 queries` | **`4390 queries`** | **99.38% reduction** in map queries |
+| **A\* Path Searches** | `17591 searches` | `2841 searches` | **`146 searches`** | **99.17% reduction** via Corridor LOS & LOD |
+| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`4908 bypasses`** | Zero-overhead straight-line pursuit |
+| **Lua GC Memory Rate** | `12681.1 KB/s` | `4070.8 KB/s` | **`392.6 KB/s`** | **32.30x lower memory churn** |
+| **Network Egress Bandwidth** | `6348.56 KB/s` | `6592.43 KB/s` | **`5636.73 KB/s`** | **11.2% to 14.5% bandwidth reduction** |
 
 [SUCCESS] Luanti Mob Frameworks Multiplayer Performance Benchmark completed successfully.
 
