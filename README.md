@@ -1,9 +1,16 @@
-# X Mob Core (`x_mob_core`)
+# X Mob Core [`x_mob_core`]
 
+[![ContentDB](https://content.luanti.org/packages/SaKeL/x_mob_core/shields/title/)](https://content.luanti.org/packages/SaKeL/x_mob_core/)
+[![ContentDB Downloads](https://content.luanti.org/packages/SaKeL/x_mob_core/shields/downloads/)](https://content.luanti.org/packages/SaKeL/x_mob_core/)
+![Luanti](https://img.shields.io/badge/Luanti-5.17%2B-5599ff.svg)
+[![Luacheck](https://img.shields.io/github/actions/workflow/status/sakel-hub/x_mob_core/luacheck.yml?label=Luacheck&logo=lua)](https://github.com/sakel-hub/x_mob_core/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sakel-hub/x_mob_core/pulls)
 ![AI-Assisted](https://img.shields.io/badge/AI--assisted-gray)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A high-performance, **zero-dependency** mob engine and spawner framework for Luanti built on **S.O.L.I.D.** architecture principles.
+
+![X Mob Core Technical Blueprint Showcase](screenshot.png)
 
 ---
 
@@ -13,25 +20,44 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
 - **3D A\* Hierarchical Pathfinding**:
   - Binary min-heap priority queue with zero-allocation push/pop operations.
   - Volumetric multi-ray corridor line-of-sight check bypassing expensive graph traversals.
-  - LRU path caching and Content ID (CID) flat lookups.
+  - LRU path caching and pre-cached Content ID (CID) flat lookups.
+  - Asynchronous coroutine time-sliced path search with strict 1.5ms per-tick CPU budget.
 - **Motor & Steering Controller**:
   - Pursuit-gated traversal (smart door opening, ladder climbing, liquid swimming).
   - Surface climbing and dynamic rotation interpolation.
-  - Multiplayer distance-based LOD execution.
+  - Tactical retreat and flee steering vectors.
+  - Multiplayer distance-based LOD execution and idle culling.
 - **glTF Multi-Track Animator**:
   - Native Luanti glTF named track playback with priority blending and track transition clearing.
-  - Automatic fallback to frame-range animation playback for older entities.
-- **Combat & Damage Subsystem**:
-  - Native tool capabilities calculation, damage groups, and tool wear.
-  - Liquid knockback dampening and damage indicator flashing.
-  - Universal child/passenger/arrow detachment on entity death.
-- **Generic Pack & Squad Coordination**:
-  - Pack UUID generation, leader-follower registry, and orphan adoption.
-  - Spatial leashing and regroup steering vectors.
-  - Shared threat and aggro broadcasting.
+  - Zero-latency runtime playback speed scaling and looping track synchronization.
+  - Frame-range fallback for legacy skeletal animations.
+- **Combat & Damage Subsystems**:
+  - Native tool capabilities calculation, damage groups, and weapon wear mechanics.
+  - Directional damage particles (configurable blood, ichor, smoke, spectral, sparks) and damage indicator flashing.
+  - Liquid knockback dampening and configurable knockback resistance multipliers.
+  - Factions and allegiance system (`x_mob_core.are_allies`, `x_mob_core.are_enemies`).
+  - Ballistic intercept aim prediction (`x_mob_core.predict_aim`).
+  - Declarative loot drop tables with radial parabolic fountain drops (`x_mob_core.drop_items`).
+  - Universal child, passenger, and arrow detachment on entity death.
+- **Pack Coordination & Swarm Intelligence**:
+  - Pack UUID generation, leader-follower registry, and automatic orphan adoption.
+  - Spatial leash tethering, regroup steering vectors, and rally commands.
+  - Shared threat and aggro broadcasting with cowardice panic propagation.
+  - 3D Boids spatial separation with horizontal anti-stacking bias.
+  - Aerial swarm flocking and coordinated dive-bomb combat patterns (`pack/swarm.lua`).
+  - Aquatic shoal flocking and synchronized swimming (`pack/shoal.lua`).
+  - Democratic leader election (`x_mob_core.elect_successor`) upon leader death.
 - **Dynamic Natural Spawner**:
   - Mapgen population pass (`core.register_on_generated`) and player-proximity trickle loop without ABMs.
   - Dynamic ground filtering from registered spawn node lists and group definitions (`group:soil`, `group:stone`).
+  - Cohesive group spawning with safe radial distribution (`x_mob_core.spawn_mob_group`).
+  - Detailed environmental condition filters: light thresholds, time-of-day windows, elevation limits, and density caps.
+- **Lifecycle, Pipeline & Event Bus**:
+  - Prioritized step middleware pipeline (`x_mob_core.register_step_hook`) for modular gameplay expansions.
+  - Entity-tied action scheduler (`x_mob_core.schedule`) safe against entity death and despawning.
+  - Pub-sub event bus (`listen`, `unlisten`, `emit`) for decoupled mod hooks (`on_mob_spawn`, `on_mob_death`, `on_mob_target`, `on_mob_damage`).
+- **Positional Audio Subsystem**:
+  - Spatial distance attenuation and pitch randomization for hurt, death, attack, ambient, and alert sound cues.
 
 ---
 
@@ -39,11 +65,17 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
 
 ```text
 x_mob_core/
-├── mod.conf                 # Zero dependencies
+├── mod.conf                 # Mod metadata and dependencies
+├── .cdb.json                # ContentDB package metadata
+├── LICENSE.txt              # MIT License
+├── README.md                # Mod documentation and showcase
+├── API.md                   # Complete API reference and EmmyLua documentation
+├── settingtypes.txt         # Engine configuration settings
 ├── api.lua                  # Public API namespace 'x_mob_core'
+├── init.lua                 # Bootstrap entry point
 ├── core/
-│   ├── types.lua            # EmmyLua type definitions
-│   ├── utils.lua            # UUID generator & table helpers
+│   ├── types.lua            # EmmyLua type definitions and interfaces
+│   ├── utils.lua            # UUID generator, line-of-sight, ground scan helpers
 │   └── events.lua           # Event bus registry (pub/sub)
 ├── navigation/
 │   ├── min_heap.lua         # Binary min-heap priority queue
@@ -57,33 +89,50 @@ x_mob_core/
 ├── combat/
 │   ├── damage.lua           # Damage calculation and tool wear
 │   ├── knockback.lua        # Knockback physics dampening
-│   ├── effects.lua          # Damage indication
-│   └── detachment.lua       # Child and arrow detachment on death
+│   ├── effects.lua          # Damage indication and directional particles
+│   ├── factions.lua         # Faction allegiance and relationship checks
+│   ├── shooter.lua          # Predictive intercept projectile aiming
+│   ├── loot.lua             # Radial parabolic item drops and declarative drop tables
+│   └── detachment.lua       # Child, passenger, and arrow detachment on death
 ├── spawning/
 │   ├── registry.lua         # Spawn rule registry
 │   ├── conditions.lua       # Ground, light, elevation, density validators
 │   └── engine.lua           # Mapgen and trickle spawner loops
 ├── pack/
-│   ├── squad.lua            # Leader/follower tracking and orphan adoption
-│   └── coordination.lua     # Spatial leash tethering and aggro broadcast
-└── lifecycle/
-    ├── entity_wrapper.lua   # Engine entity registration adapter
-    └── state_machine.lua    # State execution pipeline (idle, walk, combat, flee, custom)
+│   ├── squad.lua            # Leader/follower tracking, orphan adoption, and leader election
+│   ├── coordination.lua     # Spatial leash tethering and aggro broadcast
+│   ├── swarm.lua            # 3D aerial flocking, vortex holding, and dive-bomb runs
+│   └── shoal.lua            # Aquatic schooling, alignment, and separation
+├── lifecycle/
+│   ├── entity_wrapper.lua   # Engine entity registration adapter
+│   ├── state_machine.lua    # State execution pipeline (idle, walk, combat, flee, custom)
+│   ├── combat_handler.lua   # Universal combat punch intake and event dispatching
+│   ├── culling.lua          # Multiplayer distance-based LOD and sleep culling
+│   ├── environment.lua      # Node interaction, fall damage, and liquid buoyancy
+│   ├── pipeline.lua         # Prioritized step middleware pipeline
+│   └── properties.lua       # Dynamic property sync and scale management
+└── audio/
+    └── sound.lua            # Positional audio dispatcher and pitch variation
 ```
 
 ---
 
 ## API Quickstart
 
-### Registering a Custom Mob
+For full documentation of all classes, types, and methods, see [API.md](API.md).
+
+### 1. Registering a Custom Mob
 
 ```lua
 x_mob_core.register_mob("mymod:goblin", {
     initial_properties = {
         hp_max = 20,
-        collisionbox = {-0.3, -0.01, -0.3, 0.3, 1.2, 0.3},
         mesh = "mymod_goblin.glb",
-        textures = {"mymod_goblin.png"},
+        textures = {
+            "mymod_goblin.png",
+            "mymod_goblin.png^[colorize:#22aa55:30", -- Forest goblin variant
+        },
+        collisionbox = {-0.3, -0.01, -0.3, 0.3, 1.2, 0.3},
     },
 
     movement = {
@@ -98,6 +147,11 @@ x_mob_core.register_mob("mymod:goblin", {
         damage = 4,
         reach = 2.0,
         aggro_radius = 16.0,
+        knockback_mult = 0.8,
+        damage_effect = {
+            type = "blood",
+            count = 10,
+        },
     },
 
     animation = {
@@ -107,6 +161,18 @@ x_mob_core.register_mob("mymod:goblin", {
             combat = "attack",
             death = "death",
         },
+    },
+
+    sounds = {
+        hurt = "mymod_goblin_hurt",
+        death = "mymod_goblin_death",
+        random = "mymod_goblin_ambient",
+        attack = "mymod_goblin_attack",
+    },
+
+    drops = {
+        {name = "default:gold_lump", chance = 0.25, min = 1, max = 2},
+        {name = "default:flint", chance = 0.50, min = 1, max = 3},
     },
 
     -- Optional Pack Mechanics (Handled automatically by x_mob_core)
@@ -123,27 +189,71 @@ x_mob_core.register_mob("mymod:goblin", {
     -- Optional Custom States
     custom_states = {
         ["dance"] = {
-            enter = function(self) ... end,
-            step = function(self, dtime) ... end,
-            exit = function(self) ... end,
+            enter = function(self)
+                x_mob_core.play_animation(self.object, "dance")
+            end,
+            step = function(self, dtime)
+                -- Custom state logic
+            end,
+            exit = function(self)
+                x_mob_core.stop_animation(self.object, "dance")
+            end,
         }
     },
 })
 ```
 
-### Registering Natural Spawning
+### 2. Registering Natural Spawning
 
 ```lua
 x_mob_core.register_spawn("mymod:goblin", {
     nodes = {"group:soil", "default:dirt_with_grass", "default:stone"},
     chance = 2000,
     active_object_count = 3,
+    group_min = 2,
+    group_max = 4,
     min_light = 0,
     max_light = 12,
     min_elevation = -31000,
     max_elevation = 31000,
 })
 ```
+
+### 3. Event Bus Integration
+
+Listen to decoupled lifecycle and combat events:
+
+```lua
+x_mob_core.listen("on_mob_death", function(self, puncher)
+    if puncher and puncher:is_player() then
+        core.chat_send_player(puncher:get_player_name(), "You vanquished " .. self.name .. "!")
+    end
+end)
+```
+
+### 4. Step Pipeline Middleware
+
+Inject custom logic into the entity update loop without modifying core files:
+
+```lua
+x_mob_core.register_step_hook("mymod:freeze_aura", 50, function(self, dtime, def, moveresult)
+    if self.is_frozen then
+        x_mob_core.halt_horizontal_velocity(self)
+        return true -- Halts subsequent pipeline steps
+    end
+end)
+```
+
+---
+
+## Configuration & Settings
+
+Configurable via `minetest.conf` or the Luanti **Settings -> Mod Settings** UI:
+
+| Setting | Type | Default | Description |
+|:---|:---|:---|:---|
+| `x_mob_damage_particles` | `enum` | `mob_default` | Visual damage particle style (`mob_default`, `blood`, `smoke`, `ichor`, `spectral`, `sparks`, `none`). |
+| `x_mob_damage_particle_multiplier` | `float` | `1.0` | Global particle count scaling multiplier (`0.0` to `3.0`). |
 
 ---
 
@@ -167,15 +277,14 @@ npm run test:perf
 
 | Metric | Mobs Redo API (`mobs_redo`) | Creatura (`creatura`) | X Mob Core (`x_mob_core`) | Advantage / Improvement |
 |:---|:---|:---|:---|:---|
-| **Average Step Latency** | `1,863.8 µs/tick` | `1,181.5 µs/tick` | **`530.2 µs/tick`** | **3.52x faster** than Mobs Redo, **2.23x faster** than Creatura |
-| **Peak Tick Latency** | `3,302.0 µs` | `3,156.0 µs` | **`1,096.0 µs`** | **3.01x lower spikes**, preventing tick jitter |
+| **Average Step Latency** | `1,634.1 µs/tick` | `985.9 µs/tick` | **`541.6 µs/tick`** | **3.02x faster** than Mobs Redo, **1.82x faster** than Creatura |
+| **Peak Tick Latency** | `3,049.0 µs` | `2,509.0 µs` | **`1,262.0 µs`** | **2.42x lower spikes**, preventing tick jitter |
 | **Server TPS (20 Target)** | `20.0 TPS` | `20.0 TPS` | **`20.0 TPS`** | **98.9% tick headroom** |
-| **Max Capacity (15ms Budget)** | `~1,207 mobs` | `~1,904 mobs` | **`~4,244 mobs`** | **3.52x higher entity capacity** |
-| **Node / Map Queries** | `732,820 queries` | `129,208 queries` | **`1,146 queries`** | **99.84% reduction** in map queries |
-| **A\* Path Searches** | `18,226 searches` | `3,543 searches` | **`38 searches`** | **99.79% reduction** via Corridor LOS & LOD |
-| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`4,678 bypasses`** | Zero-overhead straight-line pursuit |
-| **Lua GC Memory Rate** | `286.4 KB/s` | `253.6 KB/s` | **`27.4 KB/s`** | **10.45x lower memory churn** |
-| **Network Egress Bandwidth** | `6,250.79 KB/s` | `6,312.93 KB/s` | **`5,398.42 KB/s`** | **13.6% to 14.5% bandwidth reduction** |
+| **Max Capacity (15ms Budget)** | `~1,376 mobs` | `~2,282 mobs` | **`~4,154 mobs`** | **3.02x higher entity capacity** |
+| **Node / Map Queries** | `692,430 queries` | `84,059 queries` | **`8,013 queries`** | **98.84% reduction** in map queries |
+| **A\* Path Searches** | `17,284 searches` | `2,242 searches` | **`245 searches`** | **98.58% reduction** via Corridor LOS & LOD |
+| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`5,025 bypasses`** | Zero-overhead straight-line pursuit |
+| **Lua GC Memory Rate** | `12,337.1 KB/s` | `3,511.6 KB/s` | **`498.3 KB/s`** | **24.76x lower memory churn** |
+| **Network Egress Bandwidth** | `6,326.52 KB/s` | `6,423.44 KB/s` | **`5,518.72 KB/s`** | **12.8% to 14.1% bandwidth reduction** |
 
 For complete multi-scenario tables (Concurrency Scaling, Entity Density, Obstacle Stress, and Distance LOD), see [benchmark_results.md](benchmark_results.md).
-
