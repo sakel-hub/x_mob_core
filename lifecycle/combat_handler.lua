@@ -145,6 +145,7 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		if ppos then
 			mob_memory.record_danger(self, ppos, dmg, 12.0)
 			mob_memory.record_target_sighting(self, puncher, ppos)
+			mob_memory.clear_unreachable_target(self, puncher)
 			if def.pack and def.pack.role == "leader" then
 				coordination.broadcast_threat(self, puncher, 16.0, 4)
 				coordination.rally_followers(self, puncher)

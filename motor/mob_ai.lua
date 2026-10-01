@@ -2346,6 +2346,8 @@ function mob_ai.update_navigation(self, dtime)
 	local glos_reason = self.path_state._glos_reason_cached
 
 	if has_los then
+		self.lost_sight_timer = 0
+		mob_memory.record_target_sighting(self, self.target, target_pos)
 		if self.path_state._corridor_cached ~= nil and self.path_state._corridor_timer < 0.2 then
 			corridor_clear = self.path_state._corridor_cached
 			has_ground_los = self.path_state._ground_los_cached
@@ -2362,9 +2364,21 @@ function mob_ai.update_navigation(self, dtime)
 			self.path_state._glos_reason_cached = glos_reason
 		end
 	else
+		self.lost_sight_timer = (self.lost_sight_timer or 0) + dtime
 		self.path_state._corridor_cached = false
 		self.path_state._ground_los_cached = false
 		self.path_state._glos_reason_cached = nil
+		if self.lost_sight_timer > 8.0 then
+			self.target = nil
+			mob_memory.clear_target_memory(self)
+			self.lost_sight_timer = 0
+			if self.path_state then
+				self.path_state.waypoints = nil
+				self.path_state.index = 1
+			end
+			self.state = "wandering"
+			return handle_mob_wandering(self, dtime, current_pos, on_wall_or_ceiling)
+		end
 	end
 
 	if has_los and corridor_clear and has_ground_los and not on_wall_or_ceiling and (self.is_floating or dy <= 3.5) then
@@ -2577,13 +2591,16 @@ function mob_ai.update_navigation(self, dtime)
 			self._water_blocked_timer = 0
 		end
 
-		-- Active pursuit locomotion while calculating, closing in with LOS, or navigating surfaces:
-		if self.path_state.is_calculating or has_los or on_wall_or_ceiling then
+		-- Active pursuit locomotion while calculating, closing in with LOS, chasing LKP, or navigating surfaces:
+		local lkp = (not has_los and not on_wall_or_ceiling and mob_memory.get_lkp_target) and
+			mob_memory.get_lkp_target(self, 8.0) or nil
+		if self.path_state.is_calculating or has_los or lkp or on_wall_or_ceiling then
 			local pursuit_dest = target_pos
-			if not has_los and not on_wall_or_ceiling then
-				local lkp = mob_memory.get_lkp_target and mob_memory.get_lkp_target(self, 8.0)
-				if lkp then
-					pursuit_dest = lkp
+			if not has_los and not on_wall_or_ceiling and lkp then
+				pursuit_dest = lkp
+				local lkp_dist = vector.distance(current_pos, lkp)
+				if lkp_dist <= 1.5 then
+					mob_memory.clear_target_memory(self)
 				end
 			end
 			local move_vec = vector.direction(current_pos, pursuit_dest)

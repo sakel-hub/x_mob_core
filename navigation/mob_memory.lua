@@ -11,6 +11,9 @@
 ---@class MobMemorySubsystem
 local mob_memory = {}
 
+local utils = (x_mob_core and x_mob_core.utils) or
+	(core and core.get_modpath and dofile(core.get_modpath("x_mob_core") .. "/core/utils.lua"))
+
 local DANGER_SLOTS = 3
 local TRAIL_SLOTS = 6
 local BLOCKED_SLOTS = 2
@@ -53,10 +56,29 @@ function mob_memory.init_memory(self)
 		-- Pre-allocated reusable query vectors (zero GC pressure)
 		vec_danger_repulse = {x = 0.0, y = 0.0, z = 0.0},
 		vec_exploration_bias = {x = 0.0, y = 0.0, z = 0.0},
+
+		-- Pre-allocated heading evaluation cache (zero GC across multi-angle candidate scoring)
+		_heading_cache = {
+			pos_x = 0.0,
+			pos_y = 0.0,
+			pos_z = 0.0,
+			time = -1.0,
+			novelty_x = 0.0,
+			novelty_y = 0.0,
+			novelty_z = 0.0,
+			danger_count = 0,
+			dangers = {},
+			blocked_count = 0,
+			blocked = {},
+		},
 	}
 
 	for i = 1, DANGER_SLOTS do
 		mem.dangers[i] = {x = 0, y = 0, z = 0, threat = 0.0, expire = 0.0, active = false}
+		mem._heading_cache.dangers[i] = {
+			ux = 0.0, uy = 0.0, uz = 0.0,
+			threat_towards = 0.0, threat_away = 0.0,
+		}
 	end
 
 	for i = 1, TRAIL_SLOTS do
@@ -65,6 +87,10 @@ function mob_memory.init_memory(self)
 
 	for i = 1, BLOCKED_SLOTS do
 		mem.blocked_spots[i] = {x = 0, y = 0, z = 0, expire = 0.0, active = false}
+		mem._heading_cache.blocked[i] = {
+			ux = 0.0, uy = 0.0, uz = 0.0,
+			weight = 0.0,
+		}
 	end
 
 	self.memory = mem
@@ -145,6 +171,14 @@ function mob_memory.record_unreachable_target(self, target_obj, duration, curren
 	if not self.memory then mob_memory.init_memory(self) end
 	local name = get_target_identifier(target_obj)
 	local now = current_time or core.get_gametime()
+
+	-- Periodic cleanup of expired unreachable targets to prevent unbounded table growth
+	for k, exp in pairs(self.memory.unreachable_targets) do
+		if now >= exp then
+			self.memory.unreachable_targets[k] = nil
+		end
+	end
+
 	self.memory.unreachable_targets[name] = now + (duration or 12.0)
 end
 
@@ -301,9 +335,23 @@ function mob_memory.record_trail_step(self, current_pos, dtime, current_time)
 
 	if mem.last_trail_sample >= TRAIL_SAMPLE_INTERVAL then
 		mem.last_trail_sample = 0.0
-		local slot = mem.trail[mem.trail_idx]
 		local now = current_time or core.get_gametime()
 
+		-- Check if mob has actually moved from previous recorded position
+		-- (prevents stationary mobs from flushing their entire trail history)
+		local prev_idx = ((mem.trail_idx - 2) % TRAIL_SLOTS) + 1
+		local prev_slot = mem.trail[prev_idx]
+		if prev_slot and prev_slot.active then
+			local dx = current_pos.x - prev_slot.x
+			local dy = current_pos.y - prev_slot.y
+			local dz = current_pos.z - prev_slot.z
+			if (dx * dx + dy * dy + dz * dz) < 0.25 then
+				prev_slot.time = now
+				return
+			end
+		end
+
+		local slot = mem.trail[mem.trail_idx]
 		slot.x = current_pos.x
 		slot.y = current_pos.y
 		slot.z = current_pos.z
@@ -374,13 +422,29 @@ function mob_memory.record_blocked_spot(self, blocked_pos, duration, current_tim
 	if not blocked_pos then return end
 
 	local mem = self.memory
-	local slot = mem.blocked_spots[mem.blocked_idx]
 	local now = current_time or core.get_gametime()
+	local dur = duration or 8.0
 
+	-- If a nearby blocked spot (< 1.0 node) is already active, refresh its expiration
+	-- instead of consuming another ring buffer slot and overwriting other obstacles
+	for i = 1, BLOCKED_SLOTS do
+		local slot = mem.blocked_spots[i]
+		if slot.active and slot.expire > now then
+			local dx = blocked_pos.x - slot.x
+			local dy = blocked_pos.y - slot.y
+			local dz = blocked_pos.z - slot.z
+			if (dx * dx + dy * dy + dz * dz) < 1.0 then
+				slot.expire = math.max(slot.expire, now + dur)
+				return
+			end
+		end
+	end
+
+	local slot = mem.blocked_spots[mem.blocked_idx]
 	slot.x = blocked_pos.x
 	slot.y = blocked_pos.y
 	slot.z = blocked_pos.z
-	slot.expire = now + (duration or 8.0)
+	slot.expire = now + dur
 	slot.active = true
 
 	mem.blocked_idx = (mem.blocked_idx % BLOCKED_SLOTS) + 1
@@ -388,6 +452,7 @@ end
 
 --- Evaluates a candidate movement direction against danger, novelty, and blocked memory
 --- Returns a scalar fitness score (higher is better)
+--- Utilizes a zero-allocation heading evaluation cache to avoid duplicate vector and sqrt computations
 ---@param self table Entity instance
 ---@param candidate_dir Vector Candidate heading direction (normalized)
 ---@param current_pos Vector Current mob position
@@ -396,50 +461,115 @@ end
 function mob_memory.evaluate_heading_bias(self, candidate_dir, current_pos, current_time)
 	if not self.memory then return 0.0 end
 
-	local score = 0.0
 	local mem = self.memory
+	local cache = mem._heading_cache
 	local now = current_time or core.get_gametime()
 
-	-- Danger aversion: penalize heading towards active danger sources
-	for i = 1, DANGER_SLOTS do
-		local slot = mem.dangers[i]
-		if slot.active and slot.expire > now then
-			local to_danger_x = slot.x - current_pos.x
-			local to_danger_y = slot.y - current_pos.y
-			local to_danger_z = slot.z - current_pos.z
-			local dist = math.sqrt(to_danger_x * to_danger_x + to_danger_y * to_danger_y + to_danger_z * to_danger_z)
-			if dist > 0.05 and dist < 16.0 then
-				local dot = (candidate_dir.x * to_danger_x + candidate_dir.y * to_danger_y + candidate_dir.z * to_danger_z) / dist
-				if dot > 0.0 then
-					-- Heading directly toward danger: apply heavy negative penalty
-					score = score - dot * (slot.threat or 1.0) * 1.5 * (1.0 - dist / 16.0)
-				else
-					-- Heading away from danger: reward
-					score = score - dot * (slot.threat or 1.0) * 0.8 * (1.0 - dist / 16.0)
+	-- Check if cache is valid for current position and timestamp
+	if not cache or cache.time ~= now or
+			cache.pos_x ~= current_pos.x or
+			cache.pos_y ~= current_pos.y or
+			cache.pos_z ~= current_pos.z then
+		if not cache then
+			cache = {
+				pos_x = 0.0, pos_y = 0.0, pos_z = 0.0, time = -1.0,
+				novelty_x = 0.0, novelty_y = 0.0, novelty_z = 0.0,
+				danger_count = 0, dangers = {},
+				blocked_count = 0, blocked = {},
+			}
+			for i = 1, DANGER_SLOTS do
+				cache.dangers[i] = {
+					ux = 0.0, uy = 0.0, uz = 0.0,
+					threat_towards = 0.0, threat_away = 0.0,
+				}
+			end
+			for i = 1, BLOCKED_SLOTS do
+				cache.blocked[i] = {ux = 0.0, uy = 0.0, uz = 0.0, weight = 0.0}
+			end
+			mem._heading_cache = cache
+		end
+
+		cache.pos_x = current_pos.x
+		cache.pos_y = current_pos.y
+		cache.pos_z = current_pos.z
+		cache.time = now
+
+		-- 1. Precompute danger directions & distance weights
+		local d_count = 0
+		for i = 1, DANGER_SLOTS do
+			local slot = mem.dangers[i]
+			if slot.active and slot.expire > now then
+				local to_danger_x = slot.x - current_pos.x
+				local to_danger_y = slot.y - current_pos.y
+				local to_danger_z = slot.z - current_pos.z
+				local dist = math.sqrt(to_danger_x * to_danger_x + to_danger_y * to_danger_y + to_danger_z * to_danger_z)
+				if dist > 0.05 and dist < 16.0 then
+					d_count = d_count + 1
+					local c_d = cache.dangers[d_count]
+					c_d.ux = to_danger_x / dist
+					c_d.uy = to_danger_y / dist
+					c_d.uz = to_danger_z / dist
+					local base_weight = (slot.threat or 1.0) * (1.0 - dist / 16.0)
+					c_d.threat_towards = base_weight * 1.5
+					c_d.threat_away = base_weight * 0.8
 				end
 			end
 		end
-	end
+		cache.danger_count = d_count
 
-	-- Exploration novelty: reward heading aligned with novelty vector (away from recent trail)
-	local novelty = mob_memory.get_exploration_bias_vector(self, current_pos)
-	local nov_dot = candidate_dir.x * novelty.x + candidate_dir.y * novelty.y + candidate_dir.z * novelty.z
-	score = score + nov_dot * 1.2
+		-- 2. Precompute exploration novelty vector
+		local nov = mob_memory.get_exploration_bias_vector(self, current_pos)
+		cache.novelty_x = nov.x
+		cache.novelty_y = nov.y
+		cache.novelty_z = nov.z
 
-	-- Blocked spot penalty: penalize heading toward recently encountered deadlocks
-	for i = 1, BLOCKED_SLOTS do
-		local b_slot = mem.blocked_spots[i]
-		if b_slot.active and b_slot.expire > now then
-			local to_bx = b_slot.x - current_pos.x
-			local to_by = b_slot.y - current_pos.y
-			local to_bz = b_slot.z - current_pos.z
-			local dist = math.sqrt(to_bx * to_bx + to_by * to_by + to_bz * to_bz)
-			if dist > 0.05 and dist < 6.0 then
-				local dot = (candidate_dir.x * to_bx + candidate_dir.y * to_by + candidate_dir.z * to_bz) / dist
-				if dot > 0.2 then
-					score = score - dot * 3.0 * (1.0 - dist / 6.0)
+		-- 3. Precompute blocked spot directions & weights
+		local b_count = 0
+		for i = 1, BLOCKED_SLOTS do
+			local b_slot = mem.blocked_spots[i]
+			if b_slot.active and b_slot.expire > now then
+				local to_bx = b_slot.x - current_pos.x
+				local to_by = b_slot.y - current_pos.y
+				local to_bz = b_slot.z - current_pos.z
+				local dist = math.sqrt(to_bx * to_bx + to_by * to_by + to_bz * to_bz)
+				if dist > 0.05 and dist < 6.0 then
+					b_count = b_count + 1
+					local c_b = cache.blocked[b_count]
+					c_b.ux = to_bx / dist
+					c_b.uy = to_by / dist
+					c_b.uz = to_bz / dist
+					c_b.weight = 3.0 * (1.0 - dist / 6.0)
 				end
 			end
+		end
+		cache.blocked_count = b_count
+	end
+
+	-- Score candidate direction using precomputed unit vectors & weights
+	local score = 0.0
+
+	-- Danger aversion
+	for i = 1, cache.danger_count do
+		local c_d = cache.dangers[i]
+		local dot = candidate_dir.x * c_d.ux + candidate_dir.y * c_d.uy + candidate_dir.z * c_d.uz
+		if dot > 0.0 then
+			score = score - dot * c_d.threat_towards
+		else
+			score = score - dot * c_d.threat_away
+		end
+	end
+
+	-- Exploration novelty
+	local nov_dot = candidate_dir.x * cache.novelty_x +
+		candidate_dir.y * cache.novelty_y + candidate_dir.z * cache.novelty_z
+	score = score + nov_dot * 1.2
+
+	-- Blocked spot penalty
+	for i = 1, cache.blocked_count do
+		local c_b = cache.blocked[i]
+		local dot = candidate_dir.x * c_b.ux + candidate_dir.y * c_b.uy + candidate_dir.z * c_b.uz
+		if dot > 0.2 then
+			score = score - dot * c_b.weight
 		end
 	end
 
@@ -481,7 +611,7 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 				mem.regen_timer = mem.regen_timer - (hp_to_add / rate)
 				local new_hp = math.min(max_hp, cur_hp + hp_to_add)
 				self.hp = new_hp
-				if self.object and self.object:is_valid() then
+				if self.object and self.object:is_valid() and self.object:get_hp() ~= 1000 then
 					self.object:set_hp(1000)
 				end
 				cur_hp = new_hp
@@ -550,7 +680,8 @@ function mob_memory.broadcast_alert(self, alert_pos, threat, radius, max_allies)
 				mob_memory.record_danger(le, alert_pos, threat or 5.0, 10.0)
 
 				-- If ally is idle or roaming without a current target, orient it towards the alert
-				if not le.target or not le.target:is_valid() or (le.target:get_hp() <= 0) then
+				local target_alive = le.target and utils and utils.is_player_alive and utils.is_player_alive(le.target)
+				if not target_alive then
 					le.memory.target.has_record = true
 					le.memory.target.name = "swarm_alert"
 					le.memory.target.lkp.x = alert_pos.x
