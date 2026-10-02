@@ -150,8 +150,8 @@ function properties.resolve_mob_properties(def)
 	-- Derive combat thresholds and range from hp_max if omitted
 	local hp_max = (props and props.hp_max) or def.hp_max or 20
 	def._hp_max = hp_max
-	-- Set generous engine HP capacity so internal C++ health never reaches zero
-	props.hp_max = math.max(hp_max, 1000)
+	-- True engine HP capacity matching mob definition (min 1 per Luanti engine requirements)
+	props.hp_max = math.max(1, math.floor(hp_max))
 
 	if props.physical == nil then props.physical = true end
 	if props.collide_with_objects == nil then
@@ -227,12 +227,58 @@ function properties.resolve_mob_properties(def)
 
 	def.attack_range = def.attack_range or 2.0
 	def.aggro_radius = def.aggro_radius or 16.0
-	if def.flee_hp_threshold == nil then
-		def.flee_hp_threshold = math.floor(hp_max * 0.25)
+	-- Health regeneration & tactical fleeing: canonical def.health_regen configuration
+	local raw_hr = def.health_regen
+	local hr_table = (type(raw_hr) == "table") and raw_hr or {}
+
+	local enabled = true
+	if raw_hr == false or raw_hr == 0 or hr_table.enabled == false then
+		enabled = false
 	end
-	if def.return_hp_threshold == nil then
-		def.return_hp_threshold = math.floor(hp_max * 0.60)
+
+	local rate
+	if not enabled then
+		rate = 0
+	elseif type(raw_hr) == "number" then
+		rate = raw_hr
+	else
+		rate = hr_table.rate or 0.5
 	end
+
+	local passive = (hr_table.passive == true)
+	local overlay = (hr_table.overlay ~= false)
+	local overlay_color = hr_table.overlay_color or hr_table.color or "^[colorize:#FFFFFF60"
+
+	local flee_threshold
+	if hr_table.can_flee == false then
+		flee_threshold = 0
+	elseif hr_table.flee_threshold ~= nil then
+		flee_threshold = hr_table.flee_threshold
+	elseif hr_table.flee_ratio ~= nil then
+		flee_threshold = math.floor(hp_max * hr_table.flee_ratio)
+	else
+		flee_threshold = math.floor(hp_max * 0.25)
+	end
+
+	local return_threshold
+	if hr_table.return_threshold ~= nil then
+		return_threshold = hr_table.return_threshold
+	elseif hr_table.return_ratio ~= nil then
+		return_threshold = math.floor(hp_max * hr_table.return_ratio)
+	else
+		return_threshold = math.floor(hp_max * 0.60)
+	end
+
+	-- Canonical single source of truth table
+	def.health_regen = {
+		enabled = enabled,
+		rate = rate,
+		passive = passive,
+		overlay = overlay,
+		overlay_color = overlay_color,
+		flee_threshold = flee_threshold,
+		return_threshold = return_threshold,
+	}
 end
 
 return properties
