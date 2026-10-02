@@ -10,3 +10,12 @@ x_mob_damage_particles (Damage particle effect) enum mob_default mob_default,blo
 
 # Multiplier for combat damage particle count (0.0 to 3.0).
 x_mob_damage_particle_multiplier (Damage particle density) float 1.0 0.0 3.0
+
+# Enable overhead health bars for mobs when damaged
+x_mob_core_enable_health_bars (Enable Mob Health Bars) bool true
+
+# Default duration in seconds before a mob health bar automatically hides
+x_mob_core_health_bar_timeout (Mob Health Bar Timeout) float 4.0 1.0 30.0
+
+# Automatically remove inactive health bar child entities on timeout instead of keeping hidden
+x_mob_core_health_bar_auto_remove (Auto-remove Inactive Health Bar Entities) bool true

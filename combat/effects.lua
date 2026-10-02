@@ -7,6 +7,7 @@
 local effects = {}
 
 local FLASH_MODIFIER = "^[colorize:#FF000060"
+local REGEN_MODIFIER = "^[colorize:#FFFFFF60"
 local cached_global_mode = core.settings:get("x_mob_damage_particles") or "mob_default"
 local cached_mult = tonumber(core.settings:get("x_mob_damage_particle_multiplier")) or 1.0
 if cached_mult <= 0 then cached_mult = 0 end
@@ -19,6 +20,22 @@ function effects.strip_damage_mod(mod)
 	if not mod or mod == "" then return "" end
 	local res = mod:gsub("%^%[[cC][oO][lL][oO][rR][iI][zZ][eE]:#[fF][fF]0000[^%^]*", "")
 	return (res:gsub("%^%[[cC][oO][lL][oO][rR][iI][zZ][eE]:[rR][eE][dD][^%^]*", ""))
+end
+
+--- Strips transient health regeneration flash colorize modifiers from a texture modifier string
+---@param mod? string Original texture modifier string
+---@return string clean_mod Texture modifier without regen colorize
+function effects.strip_regen_mod(mod)
+	if not mod or mod == "" then return "" end
+	local res = mod:gsub("%^%[[cC][oO][lL][oO][rR][iI][zZ][eE]:#[fF][fF][fF][fF][fF][fF][^%^]*", "")
+	return (res:gsub("%^%[[cC][oO][lL][oO][rR][iI][zZ][eE]:[wW][hH][iI][tT][eE][^%^]*", ""))
+end
+
+--- Strips all transient combat damage and regeneration flash colorize modifiers
+---@param mod? string Original texture modifier string
+---@return string clean_mod Texture modifier without damage or regen colorize
+function effects.strip_flash_mod(mod)
+	return effects.strip_damage_mod(effects.strip_regen_mod(mod))
 end
 
 --- Clears any active damage flash on an entity, restoring its clean base texture modifier
@@ -38,17 +55,44 @@ function effects.clear_damage(obj)
 	end
 end
 
+--- Clears any active health regeneration flash on an entity, restoring its clean base texture modifier
+---@param obj ObjectRef Entity object
+function effects.clear_regen(obj)
+	if not obj or not obj:is_valid() then return end
+	local ent = obj:get_luaentity()
+	local base_mod = ent and ent._regen_flash_base
+	if ent then
+		ent._regen_flash_timer = nil
+		ent._regen_flash_base = nil
+	end
+	-- If damage flash is actively playing, preserve it until it naturally finishes
+	if ent and ent._damage_flash_timer and ent._damage_flash_timer > 0 then
+		return
+	end
+	local cur_mod = obj:get_texture_mod() or ""
+	local clean_mod = base_mod or effects.strip_regen_mod(cur_mod)
+	if cur_mod ~= clean_mod then
+		obj:set_texture_mod(clean_mod)
+	end
+end
+
 --- Flashes the entity red briefly upon taking damage for visual feedback.
---- Prevents duplicate stacking and race condition persistence under rapid hits.
+--- Prevents duplicate stacking, clears competing regen flashes, and handles rapid hits cleanly.
 ---@param obj ObjectRef Entity object
 function effects.indicate_damage(obj)
 	if not obj or not obj:is_valid() then return end
 	local ent = obj:get_luaentity()
 
 	if ent then
-		-- Only capture the base modifier if not already actively flashing
+		-- Damage flash cancels and supersedes active health regeneration flash
+		if ent._regen_flash_timer then
+			ent._regen_flash_timer = nil
+			ent._regen_flash_base = nil
+		end
+
+		-- Only capture the base modifier if not already actively flashing damage
 		if not ent._damage_flash_timer or ent._damage_flash_timer <= 0 then
-			ent._damage_flash_base = effects.strip_damage_mod(obj:get_texture_mod() or "")
+			ent._damage_flash_base = effects.strip_flash_mod(obj:get_texture_mod() or "")
 		end
 		ent._damage_flash_timer = 0.2
 		obj:set_texture_mod((ent._damage_flash_base or "") .. FLASH_MODIFIER)
@@ -64,9 +108,57 @@ function effects.indicate_damage(obj)
 		end)
 	else
 		-- Non-LuaEntity fallback
-		local clean_mod = effects.strip_damage_mod(obj:get_texture_mod() or "")
+		local clean_mod = effects.strip_flash_mod(obj:get_texture_mod() or "")
 		obj:set_texture_mod(clean_mod .. FLASH_MODIFIER)
 		core.after(0.2, function()
+			if obj and obj:is_valid() then
+				obj:set_texture_mod(clean_mod)
+			end
+		end)
+	end
+end
+
+--- Flashes the entity white briefly upon health regeneration for visual feedback.
+--- Yields precedence to active damage flashes and suppresses while dying.
+---@param obj ObjectRef Entity object
+---@param color? string Optional texture modifier overlay (default: "^[colorize:#FFFFFF60")
+---@param duration? number Optional duration in seconds (default: 0.25)
+function effects.indicate_regen(obj, color, duration)
+	if not obj or not obj:is_valid() then return end
+	local ent = obj:get_luaentity()
+
+	-- Damage flash and death state take strict priority over health regeneration visuals
+	if ent and (ent.is_dead or ent.state == "dying") then
+		return
+	end
+	if ent and ent._damage_flash_timer and ent._damage_flash_timer > 0 then
+		return
+	end
+
+	local mod_str = color or REGEN_MODIFIER
+	local dur = duration or 0.25
+
+	if ent then
+		if not ent._regen_flash_timer or ent._regen_flash_timer <= 0 then
+			ent._regen_flash_base = effects.strip_flash_mod(obj:get_texture_mod() or "")
+		end
+		ent._regen_flash_timer = dur
+		obj:set_texture_mod((ent._regen_flash_base or "") .. mod_str)
+
+		-- Backup safety timer in case on_step is skipped or entity is deactivated
+		core.after(dur + 0.05, function()
+			if obj and obj:is_valid() then
+				local e = obj:get_luaentity()
+				if e and e._regen_flash_timer and e._regen_flash_timer <= 0.05 then
+					effects.clear_regen(obj)
+				end
+			end
+		end)
+	else
+		-- Non-LuaEntity fallback
+		local clean_mod = effects.strip_flash_mod(obj:get_texture_mod() or "")
+		obj:set_texture_mod(clean_mod .. mod_str)
+		core.after(dur, function()
 			if obj and obj:is_valid() then
 				obj:set_texture_mod(clean_mod)
 			end

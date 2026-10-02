@@ -14,7 +14,9 @@
         "diagnostics:errors": "lua-language-server --check=. --checklevel=Error",
         "check": "npm run lint && npm run diagnostics:errors",
         "test:memory": "lua scripts/test_mob_memory.lua",
-        "test": "npm run lint && npm run test:memory",
+        "test:health_bar": "lua scripts/test_health_bar.lua",
+        "test:squad": "lua scripts/test_squad_capacity.lua",
+        "test": "npm run lint && npm run test:memory && npm run test:health_bar && npm run test:squad",
         "test:perf": "lua test_multiplayer_perf.lua",
         "doc": "mkdir -p doc_build && lua-language-server --doc=. --doc_out_path=doc_build --doc_format_path=scripts/doc_format.lua && cp doc_build/doc.md API.md && rm -rf doc_build",
         "push:ci": "node ./scripts/deploy.mjs"
