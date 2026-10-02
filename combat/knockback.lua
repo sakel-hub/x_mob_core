@@ -12,10 +12,9 @@ function knockback.dampen_water_knockback(self)
 	if not self or not self.object or not self.object:is_valid() then return end
 	local pos = self.object:get_pos()
 	if not pos then return end
-	local in_liquid = false
-	if x_mob_core and x_mob_core.mob_ai and x_mob_core.mob_ai.check_in_liquid then
-		in_liquid = x_mob_core.mob_ai.check_in_liquid(pos, self.abilities or {can_swim = true}, self.mob_height or 1.5)
-	end
+	local in_liquid = x_mob_core.motor.safety.check_in_liquid(
+		pos, self.abilities or {can_swim = true}, self.mob_height or 1.5
+	)
 	if in_liquid then
 		core.after(0, function()
 			if self.object and self.object:is_valid() and not self.is_dead and self.state ~= "dying" then

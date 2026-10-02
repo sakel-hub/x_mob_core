@@ -12,7 +12,7 @@ local utils = dofile(core.get_modpath("x_mob_core") .. "/core/utils.lua")
 ---@param leader_self table Leader mob instance
 ---@param target ObjectRef Target entity
 function coordination.rally_followers(leader_self, target)
-	local followers = leader_self.pack_followers or leader_self.minions
+	local followers = leader_self.pack_followers
 	if not followers or not target then return end
 	for i = 1, #followers do
 		local obj = followers[i]
@@ -52,7 +52,7 @@ function coordination.broadcast_threat(self, target, radius, max_allies)
 				-- Alert if matching pack_id, same mob family, or allied faction
 				local is_pack_mate = self.pack_id and ent.pack_id and (self.pack_id == ent.pack_id)
 				local is_same_kind = ent.name == self.name
-				local is_allied = (x_mob_core and x_mob_core.are_allies and x_mob_core.are_allies(self, ent))
+				local is_allied = x_mob_core.are_allies(self, ent)
 
 				if is_pack_mate or is_same_kind or is_allied then
 					if not ent.target or not ent.target:is_valid() then
@@ -74,7 +74,7 @@ end
 ---@return Vector|nil leader_pos Position of leader if valid
 ---@return number dist Distance to leader
 function coordination.check_leash(follower_self)
-	local l_obj = follower_self.leader_obj or follower_self.shaman_obj
+	local l_obj = follower_self.leader_obj
 	if not l_obj or not l_obj:is_valid() then
 		return true, nil, 0
 	end
@@ -98,11 +98,10 @@ end
 ---@return boolean is_regrouping True if still actively regrouping, false if reached leader or leader lost
 function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 	local dt = dtime or 0.05
-	local leader = self.leader_obj or self.shaman_obj
+	local leader = self.leader_obj
 	if not leader or not leader:is_valid() then
 		if not self.pack_id then
 			self.leader_obj = nil
-			self.shaman_obj = nil
 		end
 		self.state = "idle"
 		return false
@@ -143,14 +142,9 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 		return false
 	end
 
-	-- Initialize path state if needed
-	if not self.path_state then
-		self.path_state = {
-			waypoints = nil,
-			index = 1,
-			timer = 0.0,
-			is_calculating = false,
-		}
+	-- Initialize path state and abilities if needed
+	if not self.abilities or not self.path_state then
+		x_mob_core.motor.safety.init_abilities(self)
 	end
 
 	local r_speed = (self.walk_speed or 3.0) * (speed_mult or 1.25)
@@ -164,10 +158,7 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 	local wpts = self.path_state.waypoints
 	local w_idx = self.path_state.index
 	if wpts and w_idx <= #wpts then
-		local mob_ai = x_mob_core and x_mob_core.mob_ai
-		if mob_ai and mob_ai.handle_mob_movement then
-			mob_ai.handle_mob_movement(self, dt, my_pos, wpts[w_idx])
-		end
+		x_mob_core.motor.locomotion.handle_mob_movement(self, dt, my_pos, wpts[w_idx])
 	else
 		if wpts and w_idx > #wpts then
 			self.path_state.waypoints = nil
@@ -175,36 +166,37 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 		end
 
 		local to_leader = vector.direction(my_pos, l_pos)
-		local mob_ai = x_mob_core and x_mob_core.mob_ai
-		local fast_pathfinder = x_mob_core and x_mob_core.fast_pathfinder
-		local abilities = self.abilities or {
-			can_swim = true,
-			can_climb = self.can_climb == true,
-			can_crawl = self.can_crawl == true,
-			can_open_doors = self.can_open_doors == true,
-		}
+		local motor = x_mob_core.motor
+		local fast_pathfinder = x_mob_core.fast_pathfinder
+		local is_aquatic = (self.shoal ~= nil) or (self.aquatic == true) or (self.is_aquatic == true) or
+			(self.type == "aquatic") or (self.factions and (self.factions.aquatic or self.factions.fish))
+		local leader_in_water = false
+		local ln = core.get_node_or_nil(l_pos)
+		local ld = ln and core.registered_nodes[ln.name]
+		if ld and ld.liquidtype and ld.liquidtype ~= "none" then
+			leader_in_water = true
+		end
+
+		local my_in_water = self.in_water == true
+		local allow_water = is_aquatic or leader_in_water or my_in_water
+
+		local abilities = utils.shallow_copy(self.abilities or {})
+		abilities.can_swim = allow_water
+		abilities.disallow_water = not allow_water
 		if abilities.can_open_doors == nil then
 			abilities.can_open_doors = (self.can_open_doors == true)
 		end
-
-		local is_wall_hit, wall_norm = false, nil
-		local step_ok = true
-		local glos_ok = true
-
-		if mob_ai then
-			if mob_ai.check_and_open_forward_doors then
-				mob_ai.check_and_open_forward_doors(my_pos, to_leader, abilities, self.object)
-			end
-			if mob_ai.has_wall_collision then
-				is_wall_hit, wall_norm = mob_ai.has_wall_collision(self, my_pos, dt)
-			end
-			if mob_ai.is_step_safe then
-				step_ok = mob_ai.is_step_safe(my_pos, to_leader, abilities)
-			end
-			if mob_ai.check_ground_line_of_sight then
-				glos_ok = mob_ai.check_ground_line_of_sight(my_pos, l_pos, abilities)
-			end
+		if abilities.can_climb == nil then
+			abilities.can_climb = (self.can_climb == true)
 		end
+		if abilities.can_crawl == nil then
+			abilities.can_crawl = (self.can_crawl == true)
+		end
+
+		local is_wall_hit, wall_norm = motor.locomotion.has_wall_collision(self, my_pos, dt)
+		motor.doors.check_and_open_forward_doors(my_pos, to_leader, abilities, self.object)
+		local step_ok = motor.safety.is_step_safe(my_pos, to_leader, abilities)
+		local glos_ok = motor.safety.check_ground_line_of_sight(my_pos, l_pos, abilities)
 
 		if step_ok and glos_ok and not is_wall_hit then
 			-- Unobstructed direct line of sight to leader
@@ -219,7 +211,7 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 		else
 			-- Path to leader is blocked by wall or obstacle: request A* path
 			self.path_state.timer = (self.path_state.timer or 0) + dt
-			if fast_pathfinder and not self.path_state.is_calculating and (self.path_state.timer >= 1.0) then
+			if not self.path_state.is_calculating and (self.path_state.timer >= 1.0) then
 				self.path_state.is_calculating = true
 				self.path_state.timer = 0.0
 				fast_pathfinder.find_path(my_pos, l_pos, abilities, function(res_wpts)
@@ -251,21 +243,19 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 			end
 
 			local deflected = false
-			if mob_ai and mob_ai.is_step_safe then
-				for c_idx = 1, #cand_dirs do
-					local cand = cand_dirs[c_idx]
-					if mob_ai.is_step_safe(my_pos, cand, abilities) then
-						self.object:set_velocity({
-							x = cand.x * (r_speed * 0.75),
-							y = y_v,
-							z = cand.z * (r_speed * 0.75),
-						})
-						local yaw = core.dir_to_yaw(cand)
-						self.object:set_yaw(yaw)
-						self._cur_rot = {x = 0, y = yaw, z = 0}
-						deflected = true
-						break
-					end
+			for c_idx = 1, #cand_dirs do
+				local cand = cand_dirs[c_idx]
+				if motor.safety.is_step_safe(my_pos, cand, abilities) then
+					self.object:set_velocity({
+						x = cand.x * (r_speed * 0.75),
+						y = y_v,
+						z = cand.z * (r_speed * 0.75),
+					})
+					local yaw = core.dir_to_yaw(cand)
+					self.object:set_yaw(yaw)
+					self._cur_rot = {x = 0, y = yaw, z = 0}
+					deflected = true
+					break
 				end
 			end
 
@@ -276,9 +266,7 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 	end
 
 	local anim = move_anim or "walk"
-	if x_mob_core and x_mob_core.animator then
-		x_mob_core.animator.play(self.object, anim, {speed = 1.2, loop = true})
-	end
+	x_mob_core.animator.play(self.object, anim, {speed = 1.2, loop = true})
 
 	return true
 end
@@ -304,9 +292,8 @@ function coordination.trigger_cowardice_panic(death_pos, mob_name, radius, panic
 				ent.state = "fleeing"
 				if ent.memory then
 					ent.memory.flee_state = true
-					if x_mob_core and x_mob_core.mob_memory and x_mob_core.mob_memory.record_danger then
-						x_mob_core.mob_memory.record_danger(ent, death_pos, dmg, rad + 4.0)
-					end
+					x_mob_core.mob_memory.record_danger(ent, death_pos, dmg, rad + 4.0)
+					x_mob_core.mob_memory.record_fight_pos(ent, death_pos, 45.0)
 				end
 			end
 		end
@@ -314,19 +301,17 @@ function coordination.trigger_cowardice_panic(death_pos, mob_name, radius, panic
 end
 
 -- Automatic pack cowardice panic listener
-if x_mob_core and x_mob_core.events then
-	x_mob_core.events.listen("on_mob_death", function(mob)
-		if mob and mob.pack_cowardice and mob.object and mob.object:is_valid() then
-			local pos = mob.object:get_pos()
-			if pos then
-				local cfg = mob.pack_cowardice
-				local rad = (type(cfg) == "table" and cfg.radius) or 12.0
-				local dur = (type(cfg) == "table" and cfg.duration) or 4.0
-				coordination.trigger_cowardice_panic(pos, mob.name, rad, dur)
-			end
+x_mob_core.events.listen("on_mob_death", function(mob)
+	if mob and mob.pack_cowardice and mob.object and mob.object:is_valid() then
+		local pos = mob.object:get_pos()
+		if pos then
+			local cfg = mob.pack_cowardice
+			local rad = (type(cfg) == "table" and cfg.radius) or 12.0
+			local dur = (type(cfg) == "table" and cfg.duration) or 4.0
+			coordination.trigger_cowardice_panic(pos, mob.name, rad, dur)
 		end
-	end)
-end
+	end
+end)
 
 --- Calculates 3D multi-agent Boids spatial repulsion with anti-stacking and soft/hard buffers
 ---@param self table Mob instance

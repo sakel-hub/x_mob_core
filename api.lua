@@ -15,9 +15,8 @@ dofile(modpath .. "/core/types.lua")
 ---@field events table Pub-sub event dispatcher subsystem
 ---@field min_heap MinHeap Binary min-heap priority queue
 ---@field path_cache table Content ID cache for pathfinding
----@field fast_pathfinder table VoxelManip A* pathfinding engine
 ---@field mob_memory table Short-term mob memory buffer
----@field mob_ai table Motor and steering AI controller
+---@field motor table<string, table> Modular motor subsystems and navigation coordinator
 ---@field animator table Skeletal animation player
 ---@field combat table<string, table> Combat calculation and feedback subsystems
 ---@field spawning table Spawner engine and spawn rule registry
@@ -49,9 +48,16 @@ x_mob_core.fast_pathfinder = dofile(modpath .. "/navigation/fast_pathfinder.lua"
 ---@type table Short-term mob memory buffer
 x_mob_core.mob_memory = dofile(modpath .. "/navigation/mob_memory.lua")
 
--- Motor & Steering Controller
----@type table Motor and steering AI controller
-x_mob_core.mob_ai = dofile(modpath .. "/motor/mob_ai.lua")
+-- Motor Subsystems & Navigation Coordinator
+---@type table<string, table> Modular motor subsystems and navigation coordinator
+x_mob_core.motor = {
+	node_cache = dofile(modpath .. "/motor/node_cache.lua"),
+	doors = dofile(modpath .. "/motor/doors.lua"),
+	surface = dofile(modpath .. "/motor/surface.lua"),
+	safety = dofile(modpath .. "/motor/safety.lua"),
+	locomotion = dofile(modpath .. "/motor/locomotion.lua"),
+	ai = dofile(modpath .. "/motor/mob_ai.lua"),
+}
 
 -- Animation Subsystem
 ---@type table Skeletal animation player
@@ -67,6 +73,7 @@ x_mob_core.combat = {
 	loot = dofile(modpath .. "/combat/loot.lua"),
 	shooter = dofile(modpath .. "/combat/shooter.lua"),
 	factions = dofile(modpath .. "/combat/factions.lua"),
+	health_bar = dofile(modpath .. "/combat/health_bar.lua"),
 }
 
 -- Spawner Engine
@@ -282,6 +289,34 @@ function x_mob_core.strip_damage_mod(mod)
 	return x_mob_core.combat.effects.strip_damage_mod(mod)
 end
 
+---Flashes the entity with a visible texture overlay (white by default) upon health regeneration.
+---@param obj ObjectRef Entity object to flash
+---@param color? string Optional custom colorize string (default: "^[colorize:#FFFFFF60")
+---@param duration? number Optional duration in seconds (default: 0.25)
+function x_mob_core.indicate_regen(obj, color, duration)
+	return x_mob_core.combat.effects.indicate_regen(obj, color, duration)
+end
+
+---Clears any active health regeneration flash on an entity, restoring its clean base texture modifier.
+---@param obj ObjectRef Entity object
+function x_mob_core.clear_regen(obj)
+	return x_mob_core.combat.effects.clear_regen(obj)
+end
+
+---Strips transient health regeneration flash colorize modifiers from a texture modifier string.
+---@param mod? string Original texture modifier string
+---@return string clean_mod Texture modifier without regen colorize
+function x_mob_core.strip_regen_mod(mod)
+	return x_mob_core.combat.effects.strip_regen_mod(mod)
+end
+
+---Strips all transient combat damage and health regeneration flash colorize modifiers.
+---@param mod? string Original texture modifier string
+---@return string clean_mod Texture modifier without damage or regen colorize
+function x_mob_core.strip_flash_mod(mod)
+	return x_mob_core.combat.effects.strip_flash_mod(mod)
+end
+
 ---Spawns directional combat damage particles according to mob settings or global preferences.
 ---@param obj ObjectRef Entity receiving damage
 ---@param puncher? ObjectRef Attacker ObjectRef
@@ -330,6 +365,37 @@ function x_mob_core.drop_items(origin, drops, options)
 	return x_mob_core.combat.loot.drop_items(origin, drops, options)
 end
 
+-- Combat Health Bar Subsystem
+
+---Displays or updates the dynamic overhead health bar on a mob entity.
+---@param self table Mob entity instance
+---@param cur_hp? number Current health (defaults to self.hp)
+---@param max_hp? number Maximum health (defaults to self.hp_max)
+---@return boolean shown True if health bar is shown or updated
+function x_mob_core.show_health_bar(self, cur_hp, max_hp)
+	local hp = cur_hp or self.hp
+	local max = max_hp or self.hp_max
+	return x_mob_core.combat.health_bar.show(self, hp, max, self._def)
+end
+
+---Hides or removes the dynamic overhead health bar on a mob entity.
+---@param self table Mob entity instance
+---@param remove_completely? boolean If true, destroys child entity; otherwise sets is_visible = false
+function x_mob_core.hide_health_bar(self, remove_completely)
+	if remove_completely then
+		x_mob_core.combat.health_bar.remove(self)
+	else
+		x_mob_core.combat.health_bar.hide(self)
+	end
+end
+
+---Forces an update of the health bar based on current mob HP.
+---@param self table Mob entity instance
+---@return boolean shown True if health bar was updated
+function x_mob_core.update_health_bar(self)
+	return x_mob_core.show_health_bar(self)
+end
+
 -- Motor & Steering Controller
 
 ---Executes tactical retreat steering away from a target position.
@@ -338,7 +404,7 @@ end
 ---@param speed? number Movement speed multiplier
 ---@return boolean is_retreating Whether retreat movement is actively executing
 function x_mob_core.retreat_from(self, target_pos, speed)
-	return x_mob_core.mob_ai.retreat_from(self, target_pos, speed)
+	return x_mob_core.motor.locomotion.retreat_from(self, target_pos, speed)
 end
 
 ---Scans for living players within radius using field of view and raycast line-of-sight checks.
@@ -347,7 +413,7 @@ end
 ---@param eye_height? number Vertical eye offset
 ---@return ObjectRef|nil player Nearest visible living player or nil
 function x_mob_core.scan_for_player(self, scan_radius, eye_height)
-	return x_mob_core.mob_ai.scan_for_player(self, scan_radius, eye_height)
+	return x_mob_core.motor.ai.scan_for_player(self, scan_radius, eye_height)
 end
 
 ---Advances ambient idle or wandering locomotion state for an entity.
@@ -357,7 +423,7 @@ end
 ---@param idle_anim? string Idle animation track name
 ---@return boolean is_moving Whether the mob is currently walking
 function x_mob_core.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
-	return x_mob_core.mob_ai.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
+	return x_mob_core.motor.ai.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
 end
 
 ---Advances directional steering locomotion towards destination or target entity.
@@ -368,14 +434,30 @@ end
 ---@param idle_anim? string Idle animation track name
 ---@return boolean is_moving Whether the mob is actively moving
 function x_mob_core.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
-	return x_mob_core.mob_ai.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
+	return x_mob_core.motor.ai.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
 end
 
 ---Halts horizontal velocity of a mob entity while preserving vertical motion/gravity and liquid buoyancy.
 ---@param self table Entity instance
 function x_mob_core.halt_horizontal_velocity(self)
-	return x_mob_core.mob_ai.halt_horizontal_velocity(self)
+	return x_mob_core.motor.locomotion.halt_horizontal_velocity(self)
 end
+
+---Checks if an entity is an aquatic mob (fish, shoal, etc.) that swims freely in liquid.
+---@param self table Entity instance
+---@return boolean is_aquatic
+function x_mob_core.is_aquatic_mob(self)
+	return x_mob_core.motor.safety.is_aquatic_mob(self)
+end
+
+---Finds the nearest dry walkable shoreline node adjacent to water within max_radius.
+---@param pos Vector Starting position (usually in water)
+---@param max_radius? number Maximum search radius in blocks (default: 16)
+---@return Vector|nil shore_pos Nearest dry shore coordinate, or nil if none found
+function x_mob_core.find_nearest_shore_pos(pos, max_radius)
+	return x_mob_core.motor.safety.find_nearest_shore_pos(pos, max_radius)
+end
+
 
 -- Navigation & Pathfinding
 
@@ -470,8 +552,10 @@ end
 ---Registers a follower under a pack leader.
 ---@param leader_self table Leader mob instance
 ---@param follower_obj ObjectRef Follower entity object
-function x_mob_core.add_follower(leader_self, follower_obj)
-	return x_mob_core.pack.squad.add_follower(leader_self, follower_obj)
+---@param force? boolean If true, bypasses max_followers capacity limit (default: false)
+---@return boolean added True if follower was newly registered, false if already present, full, or invalid
+function x_mob_core.add_follower(leader_self, follower_obj, force)
+	return x_mob_core.pack.squad.add_follower(leader_self, follower_obj, force)
 end
 
 ---Removes a follower object from a leader's roster.

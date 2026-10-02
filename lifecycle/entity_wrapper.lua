@@ -19,6 +19,8 @@ local animator = dofile(modpath .. "/animation/animator.lua")
 local utils = dofile(modpath .. "/core/utils.lua")
 local effects = dofile(modpath .. "/combat/effects.lua")
 local coordination = dofile(modpath .. "/pack/coordination.lua")
+local safety = dofile(modpath .. "/motor/safety.lua")
+local locomotion = dofile(modpath .. "/motor/locomotion.lua")
 local mob_ai = dofile(modpath .. "/motor/mob_ai.lua")
 local sound = dofile(modpath .. "/audio/sound.lua")
 local loot = dofile(modpath .. "/combat/loot.lua")
@@ -33,6 +35,7 @@ local culling = dofile(modpath .. "/lifecycle/culling.lua")
 local combat_handler = dofile(modpath .. "/lifecycle/combat_handler.lua")
 local properties = dofile(modpath .. "/lifecycle/properties.lua")
 local environment = dofile(modpath .. "/lifecycle/environment.lua")
+local health_bar = dofile(modpath .. "/combat/health_bar.lua")
 
 entity_wrapper.pipeline = pipeline
 entity_wrapper.culling = culling
@@ -43,7 +46,6 @@ entity_wrapper.set_texture = properties.set_texture
 entity_wrapper.normalize_texture_variations = properties.normalize_texture_variations
 entity_wrapper.set_armor_groups = properties.set_armor_groups
 entity_wrapper.handle_punch = combat_handler.handle_punch
-entity_wrapper.handle_default_punch = combat_handler.handle_punch
 
 -- Register core step pipeline hooks (Open/Closed Principle)
 -- Priority 20: Shooter Auto-Combat
@@ -96,9 +98,7 @@ function entity_wrapper.set_target(self, target)
 	local old_target = self.target
 	if old_target == target then return false end
 	self.target = target
-	if x_mob_core and x_mob_core.emit then
-		x_mob_core.emit("on_mob_target", self, target, old_target)
-	end
+	x_mob_core.emit("on_mob_target", self, target, old_target)
 	return true
 end
 
@@ -117,6 +117,30 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 		end
 	end
 
+	-- Regeneration flash recovery timer
+	if self._regen_flash_timer then
+		self._regen_flash_timer = self._regen_flash_timer - dtime
+		if self._regen_flash_timer <= 0 then
+			effects.clear_regen(self.object)
+		end
+	end
+
+	-- Health bar auto-hide countdown timer
+	if self._health_bar_timer and self._health_bar_timer > 0 then
+		self._health_bar_timer = self._health_bar_timer - dtime
+		if self._health_bar_timer <= 0 then
+			health_bar.on_timeout(self, def)
+		end
+	end
+
+	-- Knockback flight timer countdown
+	if self._knockback_timer then
+		self._knockback_timer = self._knockback_timer - dtime
+		if self._knockback_timer <= 0 or (self._moveresult and self._moveresult.touching_ground) then
+			self._knockback_timer = nil
+		end
+	end
+
 	-- Distance, daylight, and diurnal cycle culling (SRP delegated)
 	if culling.step_culling(self, dtime, def) then
 		return true
@@ -126,6 +150,12 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 	if self.is_dead or self.state == "dying" then
 		if self._damage_flash_timer then
 			effects.clear_damage(self.object)
+		end
+		if self._regen_flash_timer then
+			effects.clear_regen(self.object)
+		end
+		if self._health_bar_obj then
+			health_bar.remove(self)
 		end
 		combat_handler.apply_death_settling_physics(self)
 		self.action_timer = (self.action_timer or 1.5) - dtime
@@ -144,12 +174,12 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 	end
 
 	-- Liquid buoyancy update (bypassed for shoal mobs with self-contained 3D aquatic locomotion)
-	local is_shoal_mob = (def and def.shoal and def.shoal.enabled ~= false) or (self.pack_role ~= nil)
-	if mob_ai.apply_liquid_buoyancy and not is_shoal_mob then
-		local in_water, _, water_vy = mob_ai.apply_liquid_buoyancy(self, dtime)
+	local is_shoal_mob = (def and def.shoal and def.shoal.enabled ~= false) or (self.shoal ~= nil)
+	if not is_shoal_mob then
+		local in_water, _, water_vy = locomotion.apply_liquid_buoyancy(self, dtime)
 		self.in_water = in_water
 		self.water_vy = water_vy
-	elseif is_shoal_mob then
+	else
 		self.in_water = true
 		self.water_vy = 0
 	end
@@ -233,6 +263,14 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 		self.action_timer = self.action_timer - dtime
 		if not self.is_floating and not self.in_water and not self.on_wall_or_ceiling and self.object then
 			self.object:set_acceleration({x = 0, y = -9.81, z = 0})
+			local on_ground = (self._moveresult and self._moveresult.touching_ground) == true
+			if not on_ground then
+				local cur_v = self.object:get_velocity()
+				if cur_v and (cur_v.x ~= 0 or cur_v.z ~= 0) then
+					local drag = math.max(0.0, 1.0 - 1.2 * dtime)
+					self.object:set_velocity({x = cur_v.x * drag, y = cur_v.y, z = cur_v.z * drag})
+				end
+			end
 		end
 		if self.action_timer <= 0 then
 			local prev_state = self.state
@@ -252,26 +290,8 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 		return true
 	end
 
-	-- Passive health regeneration via memory buffer
-	local flee_thresh = (self.flee_hp_threshold ~= nil) and self.flee_hp_threshold or def.flee_hp_threshold
-	local ret_thresh = (self.return_hp_threshold ~= nil) and self.return_hp_threshold or def.return_hp_threshold
-	local hp_m = self.hp_max or self._hp_max or def._hp_max or 40
-	local flee_ratio = 0
-	if flee_thresh and flee_thresh > 0 then
-		flee_ratio = flee_thresh / math.max(1, hp_m)
-	elseif self.flee_ratio or def.flee_ratio then
-		flee_ratio = self.flee_ratio or def.flee_ratio
-	end
-
-	local return_ratio = 0.60
-	if ret_thresh and ret_thresh > 0 then
-		return_ratio = ret_thresh / math.max(1, hp_m)
-	elseif self.return_ratio or def.return_ratio then
-		return_ratio = self.return_ratio or def.return_ratio
-	end
-
-	local regen_rate = self.regen_rate or def.regen_rate or 0.5
-	mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, regen_rate)
+	-- Health regeneration via memory buffer
+	mob_memory.update_health_regen(self, dtime)
 
 	-- Periodic target scanning and pack follower relinking
 	local scan_int = def.scan_interval or 0.4
@@ -321,13 +341,6 @@ function entity_wrapper.register_mob(name, def)
 	-- Intercept on_activate to wire up core state, physics, pack, memory, and persistence
 	local original_on_activate = def.on_activate
 	def.on_activate = function(self, staticdata, dtime_s)
-		-- Apply standardized armor groups to ObjectRef and clear lingering damage overlays
-		if self.object then
-			self.object:set_armor_groups(resolved_armor_groups)
-			self.object:set_hp(1000) -- Internal engine buffer to prevent engine kill
-			effects.clear_damage(self.object)
-		end
-
 		-- Deserialize staticdata from previous session
 		local data = {}
 		if type(staticdata) == "table" then
@@ -348,12 +361,28 @@ function entity_wrapper.register_mob(name, def)
 		self.hp = data.hp or hp_max
 		if self.hp <= 0 then self.hp = hp_max end
 
+		if def.initial_properties then
+			if def.initial_properties.collisionbox then
+				self.collisionbox = def.initial_properties.collisionbox
+			end
+			if def.initial_properties.selectionbox then
+				self.selectionbox = def.initial_properties.selectionbox
+			end
+		end
+
+		-- Apply standardized armor groups to ObjectRef, sync engine HP, and clear lingering damage overlays
+		if self.object then
+			self.object:set_armor_groups(resolved_armor_groups)
+			self.object:set_hp(math.max(1, math.ceil(self.hp)))
+			effects.clear_damage(self.object)
+		end
+
 		self.set_armor_groups = function(s, groups)
 			properties.set_armor_groups(s, groups)
 		end
 
 		self.halt_horizontal_velocity = function(s)
-			mob_ai.halt_horizontal_velocity(s)
+			locomotion.halt_horizontal_velocity(s)
 		end
 
 		self.set_texture = function(s, id, vars)
@@ -448,10 +477,8 @@ function entity_wrapper.register_mob(name, def)
 		self.can_crawl = def.can_crawl
 		self.is_floating = def.is_floating
 		self.hover_offset = def.hover_offset
-		self.flee_hp_threshold = def.flee_hp_threshold
-		self.return_hp_threshold = def.return_hp_threshold
-		self.regen_rate = def.regen_rate
-		self.passive_regen = (def.passive_regen == true)
+		-- Health regeneration
+		self.health_regen = def.health_regen
 		self.on_regen_step = def.on_regen_step
 		self.on_return_to_fight = def.on_return_to_fight
 		self.attack_range = def.attack_range
@@ -491,13 +518,8 @@ function entity_wrapper.register_mob(name, def)
 		-- Initialize short-term memory buffer
 		mob_memory.init_memory(self)
 
-		-- Pathfinding state & orientation
-		self.path_state = {
-			waypoints = nil,
-			index = 1,
-			timer = 0.0,
-			is_calculating = false,
-		}
+		-- Pathfinding state, abilities & orientation
+		safety.init_abilities(self, def)
 		self._cur_rot = {x = 0, y = 0, z = 0}
 		self.swarm_alert = def.swarm_alert or {enabled = false}
 
@@ -514,6 +536,8 @@ function entity_wrapper.register_mob(name, def)
 					self.spawned_followers = data.spawned_followers or false
 					if not self.spawned_followers then
 						squad.spawn_initial_followers(self, def.pack.follower_type, def.pack.max_followers)
+					else
+						squad.adopt_nearby_orphans(self, 32.0)
 					end
 				end
 			elseif def.pack.role == "member" then
@@ -542,10 +566,8 @@ function entity_wrapper.register_mob(name, def)
 		end
 
 		-- Emit on_mob_spawn for external lifecycle listeners
-		if x_mob_core and x_mob_core.emit then
-			local is_fresh = (data.hp == nil and not data.saved_data)
-			x_mob_core.emit("on_mob_spawn", self, is_fresh)
-		end
+		local is_fresh = (data.hp == nil and not data.saved_data)
+		x_mob_core.emit("on_mob_spawn", self, is_fresh)
 	end
 
 	-- Standardized serializer preserving core attributes, hierarchy, and texture phenotypes
@@ -621,6 +643,7 @@ function entity_wrapper.register_mob(name, def)
 	-- Intercept on_death to guarantee child/arrow detachment and leader death handling
 	local original_on_death = def.on_death
 	def.on_death = function(self, killer)
+		health_bar.remove(self)
 		detachment.detach_attached_children(self.object)
 
 		self._killer = killer or self._killer
@@ -660,9 +683,7 @@ function entity_wrapper.register_mob(name, def)
 	local original_on_rightclick = def.on_rightclick
 	def.on_rightclick = function(self, clicker)
 		local itemstack = clicker and clicker:is_valid() and clicker:get_wielded_item()
-		if x_mob_core and x_mob_core.emit then
-			x_mob_core.emit("on_mob_rightclick", self, clicker, itemstack)
-		end
+		x_mob_core.emit("on_mob_rightclick", self, clicker, itemstack)
 		if original_on_rightclick then
 			return original_on_rightclick(self, clicker)
 		end
@@ -676,7 +697,7 @@ function entity_wrapper.register_mob(name, def)
 			self._despawn_handled = true
 			def.on_despawn(self, reason)
 		end
-		if x_mob_core and x_mob_core.emit and not self._despawn_emitted then
+		if not self._despawn_emitted then
 			self._despawn_emitted = true
 			x_mob_core.emit("on_mob_despawn", self, reason)
 		end

@@ -6,6 +6,9 @@
 ---@class DamageSubsystem
 local damage = {}
 
+local modpath = core.get_modpath("x_mob_core") or "."
+local knockback = dofile(modpath .. "/combat/knockback.lua")
+
 --- Calculates damage from tool capabilities and mob armor groups, and adds tool wear
 ---@param self table Mob entity instance
 ---@param puncher? ObjectRef Punching entity
@@ -69,9 +72,7 @@ function damage.calculate_punch_damage(self, puncher, time_from_last_punch, tool
 	end
 
 	-- Dampen excessive engine knockback when struck inside water
-	if x_mob_core and x_mob_core.dampen_water_knockback then
-		x_mob_core.dampen_water_knockback(self)
-	end
+	knockback.dampen_water_knockback(self)
 
 	return dmg
 end

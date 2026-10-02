@@ -17,6 +17,7 @@ local mob_memory = dofile(modpath .. "/navigation/mob_memory.lua")
 local squad = dofile(modpath .. "/pack/squad.lua")
 local coordination = dofile(modpath .. "/pack/coordination.lua")
 local utils = dofile(modpath .. "/core/utils.lua")
+local health_bar = dofile(modpath .. "/combat/health_bar.lua")
 
 ---Applies death settling physics, anchoring the dying entity to walkable ground without vibration.
 ---@param self table Entity instance
@@ -51,13 +52,12 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 	self.state = "dying"
 	if self.target then
 		self.target = nil
-		if x_mob_core and x_mob_core.emit then
-			x_mob_core.emit("on_mob_target", self, nil, self.target)
-		end
+		x_mob_core.emit("on_mob_target", self, nil, self.target)
 	end
 	self.action_timer = def.death_duration or 1.5
 	effects.clear_damage(self.object)
 	effects.spawn_damage_particles(self.object, puncher, dir, dmg, def)
+	health_bar.remove(self)
 
 	detachment.detach_attached_children(self.object)
 	if self.object then
@@ -67,7 +67,7 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 		})
 		-- Lock in immortal buffer so engine never deletes entity prematurely
 		self.object:set_armor_groups({ immortal = 1, fleshy = 0 })
-		self.object:set_hp(1000)
+		self.object:set_hp(1)
 		combat_handler.apply_death_settling_physics(self)
 	end
 
@@ -94,9 +94,7 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 	if def.on_death then
 		def.on_death(self, puncher)
 	end
-	if x_mob_core and x_mob_core.emit then
-		x_mob_core.emit("on_mob_death", self, puncher)
-	end
+	x_mob_core.emit("on_mob_death", self, puncher)
 end
 
 ---Universal combat punch intake handler.
@@ -133,9 +131,7 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		if self.target ~= puncher then
 			local old_target = self.target
 			self.target = puncher
-			if x_mob_core and x_mob_core.emit then
-				x_mob_core.emit("on_mob_target", self, puncher, old_target)
-			end
+			x_mob_core.emit("on_mob_target", self, puncher, old_target)
 		end
 		self.lost_sight_timer = 0
 		if self.path_state then
@@ -145,12 +141,13 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		if ppos then
 			mob_memory.record_danger(self, ppos, dmg, 12.0)
 			mob_memory.record_target_sighting(self, puncher, ppos)
+			mob_memory.record_fight_pos(self, ppos, 45.0)
 			mob_memory.clear_unreachable_target(self, puncher)
 			if def.pack and def.pack.role == "leader" then
 				coordination.broadcast_threat(self, puncher, 16.0, 4)
 				coordination.rally_followers(self, puncher)
 			elseif def.pack and def.pack.role == "member" then
-				local leader = self.leader_obj or self.shaman_obj
+				local leader = self.leader_obj
 				if leader and leader:is_valid() then
 					local s_ent = leader:get_luaentity()
 					if s_ent and not s_ent.is_dead and not s_ent.target then
@@ -171,6 +168,14 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		return true
 	end
 
+	-- Sync updated HP to engine ObjectRef
+	if self.object and self.object:is_valid() then
+		self.object:set_hp(math.max(1, math.ceil(self.hp)))
+	end
+
+	-- Update and show overhead health bar
+	health_bar.on_hp_change(self, (self.hp + dmg), self.hp, def)
+
 	-- Non-lethal feedback
 	effects.indicate_damage(self.object)
 	effects.spawn_damage_particles(self.object, puncher, dir, dmg, def)
@@ -179,8 +184,13 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 	if kb == nil then
 		kb = (def.knockback_mult ~= nil and def.knockback_mult) or 1.5
 	end
+	if tool_capabilities and tool_capabilities.damage_groups and tool_capabilities.damage_groups.knockback == 0 then
+		kb = 0
+		self._knockback_timer = 0.4
+	end
 	if kb > 0 and dir and self.object then
-		self.object:add_velocity({x = dir.x * kb, y = 0.6 * kb, z = dir.z * kb})
+		self.object:add_velocity({x = dir.x * kb, y = math.min(1.8, 0.5 * kb), z = dir.z * kb})
+		self._knockback_timer = 0.4
 	end
 
 	-- Flinch hurt animation (unless in uninterruptible state or overridden)
@@ -201,9 +211,7 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 	if def.on_hurt then
 		def.on_hurt(self, puncher, dmg)
 	end
-	if x_mob_core and x_mob_core.emit then
-		x_mob_core.emit("on_mob_hurt", self, puncher, dmg)
-	end
+	x_mob_core.emit("on_mob_hurt", self, puncher, dmg)
 
 	return true
 end
@@ -227,6 +235,14 @@ function combat_handler.apply_environmental_damage(self, dmg, damage_type, def)
 		return true
 	end
 
+	-- Sync updated HP to engine ObjectRef
+	if self.object and self.object:is_valid() then
+		self.object:set_hp(math.max(1, math.ceil(self.hp)))
+	end
+
+	-- Update and show overhead health bar
+	health_bar.on_hp_change(self, (self.hp + dmg), self.hp, def)
+
 	-- Non-lethal visual and sound feedback
 	effects.indicate_damage(self.object)
 	effects.spawn_damage_particles(self.object, nil, nil, dmg, def)
@@ -235,10 +251,8 @@ function combat_handler.apply_environmental_damage(self, dmg, damage_type, def)
 	if def.on_hurt then
 		def.on_hurt(self, nil, dmg)
 	end
-	if x_mob_core and x_mob_core.emit then
-		x_mob_core.emit("on_mob_environmental_damage", self, damage_type, dmg)
-		x_mob_core.emit("on_mob_hurt", self, nil, dmg)
-	end
+	x_mob_core.emit("on_mob_environmental_damage", self, damage_type, dmg)
+	x_mob_core.emit("on_mob_hurt", self, nil, dmg)
 
 	return false
 end
