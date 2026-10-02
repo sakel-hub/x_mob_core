@@ -73,6 +73,13 @@ local utils = {
 
 local x_mob_core = {
 	utils = utils,
+	indicate_regen = function(_obj, _color, _dur) end,
+	combat = {
+		health_bar = {
+			on_hp_change = function(_self, _old_hp, _new_hp, _def) end,
+		},
+	},
+	rally_followers = function(_leader, _target) end,
 }
 _G.x_mob_core = x_mob_core
 
@@ -376,6 +383,34 @@ do
 	assert_test(ally2_ent.memory == nil or ally2_ent.memory.target == nil or ally2_ent.memory.target.name ~= "swarm_alert",
 		"ally with living target is NOT redirected to alert")
 	assert_test(ally3_ent.memory.target.name == "swarm_alert", "ally with dead target IS redirected to alert")
+end
+
+-- TEST 11: Combat / Fight Memory Recording, Retrieval & Expiration
+do
+	local mob = {}
+	mob_memory.init_memory(mob)
+
+	current_gametime = 900.0
+	mob_memory.record_fight_pos(mob, {x = 15, y = 1, z = -30}, 45.0)
+
+	local fpos = mob_memory.get_fight_pos(mob)
+	assert_test(fpos ~= nil and fpos.x == 15 and fpos.z == -30, "record_fight_pos saves combat position")
+
+	-- Advance time to 940.0s (40s elapsed, within 45s window)
+	current_gametime = 940.0
+	local fpos2 = mob_memory.get_fight_pos(mob)
+	assert_test(fpos2 ~= nil and fpos2.x == 15, "get_fight_pos remains valid within 45s window")
+
+	-- Advance time to 946.0s (46s elapsed, expired)
+	current_gametime = 946.0
+	local fpos3 = mob_memory.get_fight_pos(mob)
+	assert_test(fpos3 == nil, "get_fight_pos expires after duration")
+
+	-- Explicit clear
+	current_gametime = 950.0
+	mob_memory.record_fight_pos(mob, {x = 5, y = 0, z = 5}, 45.0)
+	mob_memory.clear_fight_pos(mob)
+	assert_test(mob_memory.get_fight_pos(mob) == nil, "clear_fight_pos clears combat position immediately")
 end
 
 print("==================================================")

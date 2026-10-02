@@ -190,7 +190,7 @@ local function astar_search(start_pos, target_pos, abilities, mob_height)
 	local c_tall = path_cache.tall_obstacle
 
 	local can_climb = abilities.can_climb == true
-	local can_swim = abilities.can_swim == true
+	local can_swim = (abilities.can_swim == true) and not (abilities and abilities.disallow_water == true)
 	local can_open_doors = abilities.can_open_doors == true
 	local height = math.max(1, math.ceil(mob_height or DEFAULT_MOB_HEIGHT))
 

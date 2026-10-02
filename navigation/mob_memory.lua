@@ -11,8 +11,8 @@
 ---@class MobMemorySubsystem
 local mob_memory = {}
 
-local utils = (x_mob_core and x_mob_core.utils) or
-	(core and core.get_modpath and dofile(core.get_modpath("x_mob_core") .. "/core/utils.lua"))
+local modpath = core.get_modpath("x_mob_core") or "."
+local utils = dofile(modpath .. "/core/utils.lua")
 
 local DANGER_SLOTS = 3
 local TRAIL_SLOTS = 6
@@ -50,12 +50,22 @@ function mob_memory.init_memory(self)
 		regen_timer = 0.0,
 		flee_state = false,
 
+		-- Fight / combat location memory (decoupled from 8s LKP for tactical return)
+		fight = {
+			x = 0.0,
+			y = 0.0,
+			z = 0.0,
+			expire = 0.0,
+			active = false,
+		},
+
 		-- Unreachable targets cache (e.g. across impassable water)
 		unreachable_targets = {},
 
 		-- Pre-allocated reusable query vectors (zero GC pressure)
 		vec_danger_repulse = {x = 0.0, y = 0.0, z = 0.0},
 		vec_exploration_bias = {x = 0.0, y = 0.0, z = 0.0},
+		vec_fight_return = {x = 0.0, y = 0.0, z = 0.0},
 
 		-- Pre-allocated heading evaluation cache (zero GC across multi-angle candidate scoring)
 		_heading_cache = {
@@ -232,6 +242,56 @@ function mob_memory.record_danger(self, danger_pos, threat_level, duration, curr
 	slot.active = true
 
 	mem.danger_idx = (mem.danger_idx % DANGER_SLOTS) + 1
+end
+
+--- Records a combat / fight location
+---@param self table Entity instance
+---@param fight_pos Vector World coordinates of the fight
+---@param duration? number Duration in seconds before expiration (default: 45.0)
+---@param current_time? number Current timestamp
+function mob_memory.record_fight_pos(self, fight_pos, duration, current_time)
+	if not self.memory then mob_memory.init_memory(self) end
+	if not fight_pos then return end
+
+	local f = self.memory.fight
+	local now = current_time or core.get_gametime()
+	f.x = fight_pos.x
+	f.y = fight_pos.y
+	f.z = fight_pos.z
+	f.expire = now + (duration or 45.0)
+	f.active = true
+end
+
+--- Retrieves active fight location if not expired
+---@param self table Entity instance
+---@param current_time? number Current timestamp
+---@return Vector|nil fight_pos Coordinates of the fight or nil
+function mob_memory.get_fight_pos(self, current_time)
+	if not self.memory or not self.memory.fight or not self.memory.fight.active then
+		return nil
+	end
+
+	local f = self.memory.fight
+	local now = current_time or core.get_gametime()
+	if now < f.expire then
+		local out = self.memory.vec_fight_return or {x = 0.0, y = 0.0, z = 0.0}
+		self.memory.vec_fight_return = out
+		out.x = f.x
+		out.y = f.y
+		out.z = f.z
+		return out
+	else
+		f.active = false
+		return nil
+	end
+end
+
+--- Clears fight memory explicitly
+---@param self table Entity instance
+function mob_memory.clear_fight_pos(self)
+	if self.memory and self.memory.fight then
+		self.memory.fight.active = false
+	end
 end
 
 --- Calculates a spatial repulsion vector away from all active danger spots
@@ -591,9 +651,19 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 	local max_hp = self.hp_max or (self.initial_properties and self.initial_properties.hp_max) or 40
 	local cur_hp = self.hp or (self.object and self.object:is_valid() and self.object:get_hp()) or max_hp
 
-	local flee_thresh = max_hp * (flee_ratio or 0.25)
-	local return_thresh = max_hp * (return_ratio or 0.60)
-	local rate = regen_rate or 0.5
+	-- Read canonical health_regen source of truth table
+	local hr = self.health_regen or (self._def and self._def.health_regen)
+	local flee_thresh = (hr and hr.flee_threshold) or math.floor(max_hp * 0.25)
+	local return_thresh = (hr and hr.return_threshold) or math.floor(max_hp * 0.60)
+	local rate = (hr and hr.rate) or 0.5
+	local passive = hr and (hr.passive == true)
+	local overlay = not hr or (hr.overlay ~= false)
+	local overlay_color = (hr and hr.overlay_color) or "^[colorize:#FFFFFF60"
+
+	-- Caller-provided argument overrides
+	if flee_ratio ~= nil then flee_thresh = max_hp * flee_ratio end
+	if return_ratio ~= nil then return_thresh = max_hp * return_ratio end
+	if regen_rate ~= nil then rate = regen_rate end
 
 	-- Enter fleeing if HP drops below threshold
 	if flee_thresh > 0 and not mem.flee_state and cur_hp <= flee_thresh and cur_hp > 0 then
@@ -601,20 +671,32 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 		self.state = "fleeing"
 	end
 
-	-- While fleeing or when passive regeneration is enabled, passively regenerate health
-	local should_regen = mem.flee_state or self.passive_regen or (flee_thresh == 0 and rate > 0)
+	-- While fleeing, panicking, or when passive regeneration is enabled, regenerate health
+	local is_running_away = mem.flee_state or (self.state == "fleeing" or self.state == "flee") or
+		(self.panic_timer and self.panic_timer > 0)
+	local should_regen = (rate > 0) and (is_running_away or passive)
 	if should_regen and cur_hp < max_hp and cur_hp > 0 then
 		mem.regen_timer = mem.regen_timer + dtime
 		if mem.regen_timer >= 1.0 then
 			local hp_to_add = math.floor(mem.regen_timer * rate)
 			if hp_to_add >= 1 then
 				mem.regen_timer = mem.regen_timer - (hp_to_add / rate)
+				local old_hp = cur_hp
 				local new_hp = math.min(max_hp, cur_hp + hp_to_add)
 				self.hp = new_hp
-				if self.object and self.object:is_valid() and self.object:get_hp() ~= 1000 then
-					self.object:set_hp(1000)
+				if self.object and self.object:is_valid() then
+					self.object:set_hp(math.max(1, math.min(max_hp, math.ceil(new_hp))))
 				end
 				cur_hp = new_hp
+
+				-- Trigger visual white texture overlay feedback (same mechanism as hurt flash, but white)
+				if overlay and self.object and self.object:is_valid() then
+					x_mob_core.indicate_regen(self.object, overlay_color)
+				end
+
+				-- Update dynamic health bar if present
+				x_mob_core.combat.health_bar.on_hp_change(self, old_hp, new_hp, self._def)
+
 				if self.on_regen_step then
 					self:on_regen_step(hp_to_add)
 				end
@@ -637,9 +719,10 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 			if self.on_return_to_fight then
 				self:on_return_to_fight()
 			elseif self.target and (self.pack_role == "leader" or (self.pack and self.pack.role == "leader")) then
-				if x_mob_core and x_mob_core.rally_followers then
-					x_mob_core.rally_followers(self, self.target)
-				end
+				x_mob_core.rally_followers(self, self.target)
+			elseif not self.target and mem.fight and mem.fight.active then
+				self.state = "returning"
+				self.nav_target_pos = mob_memory.get_fight_pos(self)
 			end
 		end
 	end
@@ -680,7 +763,7 @@ function mob_memory.broadcast_alert(self, alert_pos, threat, radius, max_allies)
 				mob_memory.record_danger(le, alert_pos, threat or 5.0, 10.0)
 
 				-- If ally is idle or roaming without a current target, orient it towards the alert
-				local target_alive = le.target and utils and utils.is_player_alive and utils.is_player_alive(le.target)
+				local target_alive = le.target and utils.is_player_alive(le.target)
 				if not target_alive then
 					le.memory.target.has_record = true
 					le.memory.target.name = "swarm_alert"
