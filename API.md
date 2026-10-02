@@ -120,9 +120,13 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `clear_damage` | `function EffectsSubsystem.clear_damage(obj: ObjectRef)` | Clears any active damage flash on an entity, restoring its clean base texture modifier @*param* `obj` — Entity object |
-| `indicate_damage` | `function EffectsSubsystem.indicate_damage(obj: ObjectRef)` | Flashes the entity red briefly upon taking damage for visual feedback. Prevents duplicate stacking and race condition persistence under rapid hits. @*param* `obj` — Entity object |
+| `clear_regen` | `function EffectsSubsystem.clear_regen(obj: ObjectRef)` | Clears any active regeneration flash on an entity, restoring its clean base texture modifier @*param* `obj` — Entity object |
+| `indicate_damage` | `function EffectsSubsystem.indicate_damage(obj: ObjectRef)` | Flashes the entity red briefly upon taking damage for visual feedback. Prevents duplicate stacking, clears competing regen flashes, and handles rapid hits cleanly. @*param* `obj` — Entity object |
+| `indicate_regen` | `function EffectsSubsystem.indicate_regen(obj: ObjectRef, color?: string, duration?: number)` | Flashes the entity with a visible texture overlay (white by default) upon health regeneration. Yields precedence to active damage flashes. @*param* `obj` — Entity object @*param* `color` — Optional texture modifier overlay (default: `^[colorize:#FFFFFF60`) @*param* `duration` — Duration in seconds (default: 0.25) |
 | `spawn_damage_particles` | `function EffectsSubsystem.spawn_damage_particles(obj: ObjectRef, puncher?: ObjectRef, dir?: Vector, damage?: number, def?: table)` | Spawns contextual, directional damage particles when an entity is damaged. Configurable globally via `x_mob_damage_particles` and `x_mob_damage_particle_multiplier`, or per-mob via `def.damage_effect`. Can be disabled by setting `damage_effect = false`, `damage_effect = "none"`, or `{ enabled = false }` / `{ type = "none" }`. @*param* `obj` — Entity object receiving damage @*param* `puncher` — Attacking entity or player @*param* `dir` — Strike/knockback direction vector @*param* `damage` — Damage points dealt @*param* `def` — Mob definition table |
 | `strip_damage_mod` | `function EffectsSubsystem.strip_damage_mod(mod?: string)   -> clean_mod: string` | Strips transient damage flash colorize modifiers from a texture modifier string @*param* `mod` — Original texture modifier string @*return* `clean_mod` — Texture modifier without damage colorize |
+| `strip_flash_mod` | `function EffectsSubsystem.strip_flash_mod(mod?: string)   -> clean_mod: string` | Strips all transient combat damage and regeneration flash colorize modifiers @*param* `mod` — Original texture modifier string @*return* `clean_mod` — Texture modifier without damage or regen colorize |
+| `strip_regen_mod` | `function EffectsSubsystem.strip_regen_mod(mod?: string)   -> clean_mod: string` | Strips transient health regeneration flash colorize modifiers from a texture modifier string @*param* `mod` — Original texture modifier string @*return* `clean_mod` — Texture modifier without regen colorize |
 
 ### `EntityWrapperSubsystem`
 
@@ -132,7 +136,6 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `culling` | `unknown` |  |
 | `environment` | `unknown` |  |
 | `handle_core_step` | `function EntityWrapperSubsystem.handle_core_step(self: table, dtime: number, def: table)   -> handled: boolean` | Universal step lifecycle handler. Manages death countdown, buoyancy, target validation, timers, action completions, and idle navigation. @*param* `self` — Mob entity instance @*param* `dtime` — Step delta time @*param* `def` — Entity definition table @*return* `handled` — True if step was fully handled (e.g. dying or action-locked) |
-| `handle_default_punch` | `unknown` |  |
 | `handle_punch` | `unknown` |  |
 | `normalize_texture_variations` | `unknown` |  |
 | `pipeline` | `unknown` |  |
@@ -174,6 +177,20 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `find_path` | `function FastPathfinder.find_path(start_pos: Vector, target_pos: Vector, abilities: table, callback: fun(path: table\|nil), mob_height: integer\|nil)` | Queues an asynchronous pathfinding task @*param* `start_pos` — Starting world position @*param* `target_pos` — Target world position @*param* `abilities` — Mob movement capabilities @*param* `callback` — Callback invoked upon path completion @*param* `mob_height` — Mob height clearance in nodes |
 | `find_path_sync` | `function FastPathfinder.find_path_sync(start_pos: Vector, target_pos: Vector, abilities: table, mob_height: integer\|nil)   -> table\|nil` | Synchronous path request (for fallback or immediate test verification) |
 | `step` | `function FastPathfinder.step(_dtime: number)` | Globalstep processor executing search coroutines under the hard tick budget Uses strict sequential execution so concurrent mob searches never interleave or corrupt shared memory buffers @*param* `_dtime` — Server step delta time |
+
+### `HealthBarSubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `calculate_dimensions` | `function HealthBarSubsystem.calculate_dimensions(self: table, def?: table, cfg?: table)   -> visual_size: Vector2d   2. attach_pos: Vector` | Calculates proportional visual size and attachment position based on mob bounding box and nametag. @*param* `self` — Mob entity instance @*param* `def` — Entity definition table @*param* `cfg` — Health bar configuration @*return* `visual_size` — Sprite dimensions in world units @*return* `attach_pos` — Local attachment offset in engine units (tenths of a node) |
+| `get_config` | `function HealthBarSubsystem.get_config(def?: table)   -> cfg: table` | Resolves effective health bar configuration for a mob. @*param* `def` — Entity definition table @*return* `cfg` — Merged configuration |
+| `get_texture` | `function HealthBarSubsystem.get_texture(width: integer, height: integer, border: integer, fill_w: integer, bar_color: string, border_color: string, empty_color: string)   -> texture_modifier: string` | Generates or retrieves a memoized [combine: texture modifier string for the health bar. @*param* `width` — Total texture width in px @*param* `height` — Total texture height in px @*param* `border` — Border thickness in px @*param* `fill_w` — Width of the filled health bar in px @*param* `bar_color` — Fill color hex string (e.g. "#00FF00") @*param* `border_color` — Border color hex string (e.g. "#111111") @*param* `empty_color` — Background depleted track hex string (e.g. "#330000") @*return* `texture_modifier` — Compiled texture modifier string |
+| `hide` | `function HealthBarSubsystem.hide(self: table)` | Hides the health bar entity by setting is_visible = false (soft hide). @*param* `self` — Mob entity instance |
+| `on_hp_change` | `function HealthBarSubsystem.on_hp_change(self: table, _old_hp: number, new_hp: number, def?: table)` | Dispatches an HP change event to update the health bar. @*param* `self` — Mob entity instance @*param* `_old_hp` — Previous health value @*param* `new_hp` — Updated health value @*param* `def` — Entity definition table |
+| `on_timeout` | `function HealthBarSubsystem.on_timeout(self: table, def?: table)` | Handles health bar auto-hiding when the countdown timer expires. @*param* `self` — Mob entity instance @*param* `def` — Entity definition table |
+| `remove` | `function HealthBarSubsystem.remove(self: table)` | Removes and destroys the health bar child entity completely. @*param* `self` — Mob entity instance |
+| `resolve_color` | `function HealthBarSubsystem.resolve_color(ratio: number, color_list: table[])   -> color: string` | Resolves the bar fill color according to current health ratio and color tiers. @*param* `ratio` — Current health ratio (0.0 to 1.0) @*param* `color_list` — List of {threshold: number, color: string} @*return* `color` — Hex color string |
+| `show` | `function HealthBarSubsystem.show(self: table, cur_hp: number, max_hp: number, def?: table)   -> shown: boolean` | Shows or updates the overhead health bar on a mob entity, resetting the timeout window. @*param* `self` — Mob entity instance @*param* `cur_hp` — Current health value @*param* `max_hp` — Maximum health value @*param* `def` — Entity definition table @*return* `shown` — True if health bar is shown or updated |
 
 ### `KnockbackSubsystem`
 
@@ -244,6 +261,32 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `loop` | `boolean?` | Whether to loop animation by default |
 | `speed` | `number?` | Playback speed multiplier (default: 1.0) |
 | `track` | `string` | Named glTF animation track |
+
+### `MobHealthBarColorBand`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `color` | `string` | Hex color string (e.g. "#00FF00") |
+| `threshold` | `number` | Health ratio threshold (0.0 to 1.0) |
+
+### `MobHealthBarConfig`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `auto_remove` | `boolean?` | Whether to remove child entity on timeout (default: true) |
+| `auto_scale` | `boolean?` | Whether to proportionally scale visual_size to mob bounding box (default: true) |
+| `border` | `integer?` | Border thickness in pixels (default: 1) |
+| `border_color` | `string?` | Hex color for outer border (default: "#111111") |
+| `colors` | `MobHealthBarColorBand[]?` | List of color thresholds evaluated from highest to lowest |
+| `empty_color` | `string?` | Hex color for depleted health background track (default: "#330000") |
+| `enabled` | `boolean?` | Whether health bar is enabled for this mob (default: true) |
+| `glow` | `integer?` | Light emission in dark environments 0..14 (default: 5) |
+| `height` | `integer?` | Texture height in pixels (default: 8) |
+| `offset_y` | `number?` | Direct height offset override in nodes |
+| `spacing` | `number?` | Spacing in nodes above mob collisionbox top (default: 0.35) |
+| `timeout` | `number?` | Duration in seconds before health bar auto-hides (default: 4.0) |
+| `visual_size` | `Vector2d?` | Explicit sprite visual size override in world coordinates |
+| `width` | `integer?` | Texture width in pixels (default: 64) |
 
 ### `MobMemorySubsystem`
 
@@ -483,7 +526,7 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `add_follower` | `function SquadSubsystem.add_follower(self: table, follower_obj: ObjectRef)   -> added: boolean` | Registers a follower under a leader @*param* `self` — Leader mob instance @*param* `follower_obj` — Follower entity object @*return* `added` — True if follower was newly registered, false if already present or invalid |
+| `add_follower` | `function SquadSubsystem.add_follower(self: table, follower_obj: ObjectRef, force?: boolean)   -> added: boolean` | Registers a follower under a leader @*param* `self` — Leader mob instance @*param* `follower_obj` — Follower entity object @*param* `force` — If true, bypasses max_followers capacity limit (default: false) @*return* `added` — True if follower was newly registered, false if already present, full, or invalid |
 | `adopt_nearby_orphans` | `function SquadSubsystem.adopt_nearby_orphans(self: table, search_radius?: number)` | Leader searches nearby area to adopt orphans or re-link separated followers @*param* `self` — Leader mob instance @*param* `search_radius` — Radius to search (default: 32.0) |
 | `clean_followers` | `function SquadSubsystem.clean_followers(self: table)   -> count: integer   2. alive_followers: table` | Cleans invalid/dead follower objects from a leader's roster in-place without table allocations @*param* `self` — Leader mob instance |
 | `elect_successor` | `function SquadSubsystem.elect_successor(self: table, search_radius?: number)   -> success: boolean` | Democratic leader election: promotes the first surviving follower in-place @*param* `self` — Mob instance (dying leader or surviving follower) @*param* `search_radius` — Radius to search for surviving members (default: 24.0) @*return* `success` — True if a new leader was established |
@@ -580,7 +623,10 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `generate_uuid` | `function UtilsSubsystem.generate_uuid()   -> uuid: string` | Generates an RFC 4122 Version 4 compliant UUID. Uses Luanti's OS-backed SecureRandom for guaranteed uniqueness, with an automatic RFC 4122 template math.random fallback. |
 | `get_ground_y` | `function UtilsSubsystem.get_ground_y(pos: Vector, max_down?: number, max_up?: number, walkable_only?: boolean)   -> ground_y: number\|nil` | Finds the topmost solid ground surface near a given coordinate @*param* `pos` — Position to check @*param* `max_down` — Maximum distance to search downwards (default: 8) @*param* `max_up` — Maximum distance to search upwards (default: 3) @*param* `walkable_only` — If true, requires walkable non-liquid node with headroom (default: true) @*return* `ground_y` — Top surface height of highest ground node, or nil |
 | `get_headroom` | `function UtilsSubsystem.get_headroom(origin: Vector, max_check?: number)   -> headroom: number` | Scans vertically upwards from origin to check distance to the first solid ceiling node. @*param* `origin` — Base position (e.g. foot or center coordinate) @*param* `max_check` — Maximum nodes to scan upward (default: 4.0) @*return* `headroom` — Distance to first walkable ceiling node, or max_check if open sky |
+| `get_water_column_bounds` | `function UtilsSubsystem.get_water_column_bounds(pos: Vector, _pad?: number\|table)   -> safe_min_y: number, safe_max_y: number, is_shallow: boolean, surface_y: number, floor_y: number` | Determines safe submerged vertical range for an entity in the water column. Strictly guarantees minimum 2-node clearance below the air surface. @*param* `pos` — World position @*param* `_pad` — Optional padding @*return* `safe_min_y` — Lowest safe Y coordinate @*return* `safe_max_y` — Highest safe Y coordinate @*return* `is_shallow` — True if water depth is under 3.5 nodes @*return* `surface_y` — Highest water block Y @*return* `floor_y` — Lowest water block Y |
 | `is_player_alive` | `function UtilsSubsystem.is_player_alive(player: ObjectRef)   -> is_alive: boolean` | Checks if an ObjectRef is a valid living player or entity @*param* `player` — Target entity @*return* `is_alive` — True if player reference is valid and alive |
+| `is_walkable_node` | `function UtilsSubsystem.is_walkable_node(pos_or_x: Vector\|number, y?: number, z?: number)   -> is_walkable: boolean` | Checks if a node at world coordinates or Vector represents walkable solid terrain @*param* `pos_or_x` — Vector or X world coordinate @*param* `y` — Optional Y world coordinate @*param* `z` — Optional Z world coordinate @*return* `is_walkable` — True if node is registered and walkable |
+| `is_water_node` | `function UtilsSubsystem.is_water_node(pos_or_x: Vector\|number, y?: number, z?: number)   -> is_water: boolean` | Checks if a node at world coordinates or Vector represents water @*param* `pos_or_x` — Vector or X world coordinate @*param* `y` — Optional Y world coordinate @*param* `z` — Optional Z world coordinate @*return* `is_water` — True if node is in group:water |
 | `line_of_sight` | `function UtilsSubsystem.line_of_sight(p1: Vector, p2: Vector)   -> is_clear: boolean` | Line of sight check between two points using native engine C++ ray traversal with liquid penetration support |
 | `pick_ground_waypoint` | `function UtilsSubsystem.pick_ground_waypoint(current_pos: Vector, origin?: Vector, radius?: number, min_dist?: number, max_dist?: number, hover_offset?: number)   -> waypoint: Vector\|nil` | Picks a ground-anchored wander waypoint near current position over solid walkable nodes @*param* `current_pos` — Current mob world position @*param* `origin` — Center origin of wander boundary (default: current_pos) @*param* `radius` — Maximum wander radius from origin (default: 10.0) @*param* `min_dist` — Minimum step distance from current position (default: 3.0) @*param* `max_dist` — Maximum step distance from current position (default: 7.5) @*param* `hover_offset` — Vertical offset above detected ground (default: 1.4) @*return* `waypoint` — Ground-anchored target position or nil |
 | `shallow_copy` | `function UtilsSubsystem.shallow_copy(tbl: <T:table>)   -> <T:table>` | Shallow copies a table |
@@ -933,13 +979,19 @@ Multi-agent squad hierarchies, leader-follower tracking, orphan adoption, spatia
 Registers a follower under a pack leader.
 
 ```lua
-function x_mob_core.add_follower(leader_self: table, follower_obj: ObjectRef)
+function x_mob_core.add_follower(leader_self: table, follower_obj: ObjectRef, force?: boolean)
+  -> added: boolean
 ```
 
 **Parameters:**
 
 * `leader_self` (`table`): Leader mob instance
 * `follower_obj` (`ObjectRef`): Follower entity object
+* `force` (`boolean?`): If true, bypasses max_followers capacity limit (default: false)
+
+**Returns:**
+
+* `added` (`boolean`): True if follower was newly registered, false if already present, full, or invalid
 
 #### `x_mob_core.adopt_nearby_orphans`
 
@@ -1473,6 +1525,102 @@ function x_mob_core.strip_damage_mod(mod?: string)
 
 * `clean_mod` (`string`): Texture modifier without damage colorize
 
+#### `x_mob_core.indicate_regen`
+
+Flashes the entity with a visible texture overlay (white by default, matching hurt flash feedback) upon health regeneration. Yields precedence to active damage flashes.
+
+```lua
+function x_mob_core.indicate_regen(obj: ObjectRef, color?: string, duration?: number)
+```
+
+**Parameters:**
+
+* `obj` (`ObjectRef`): Entity object to flash
+* `color` (`string?`): Optional texture modifier overlay (default: `"^[colorize:#FFFFFF60"`)
+* `duration` (`number?`): Duration in seconds (default: `0.25`)
+
+#### `x_mob_core.clear_regen`
+
+Clears any active health regeneration flash on an entity, restoring its clean base texture modifier.
+
+```lua
+function x_mob_core.clear_regen(obj: ObjectRef)
+```
+
+**Parameters:**
+
+* `obj` (`ObjectRef`): Entity object
+
+#### `x_mob_core.strip_regen_mod`
+
+Strips transient health regeneration flash colorize modifiers from a texture modifier string.
+
+```lua
+function x_mob_core.strip_regen_mod(mod?: string)
+  -> clean_mod: string
+```
+
+**Parameters:**
+
+* `mod` (`string?`): Original texture modifier string
+
+**Returns:**
+
+* `clean_mod` (`string`): Texture modifier without regen colorize
+
+#### `x_mob_core.strip_flash_mod`
+
+Strips all transient combat damage and health regeneration flash colorize modifiers.
+
+```lua
+function x_mob_core.strip_flash_mod(mod?: string)
+  -> clean_mod: string
+```
+
+**Parameters:**
+
+* `mod` (`string?`): Original texture modifier string
+
+**Returns:**
+
+* `clean_mod` (`string`): Texture modifier without damage or regen colorize
+
+---
+
+## Health Regeneration & Fleeing API
+
+Every mob in `x_mob_core` features built-in tactical fleeing and small health regeneration when running away (`0.5 HP/s` default) with visible white texture overlay feedback. Third-party mob developers can configure and override every aspect of health regeneration in their mob definition table (`def`):
+
+### Configuration Options
+
+```lua
+x_mob_core.register_mob("mymod:custom_mob", {
+    initial_properties = { hp_max = 50 },
+
+    -- Structured health regeneration configuration (single source of truth)
+    health_regen = {
+        rate = 1.5,                  -- HP regenerated per second (default: 0.5)
+        enabled = true,              -- Set false to disable health regeneration
+        overlay = true,              -- White texture overlay flash on regen tick (default: true)
+        overlay_color = "#FFFFFF60", -- Custom colorize modifier (e.g. green or holy gold)
+        passive = false,             -- Set true to regenerate health continuously while idle
+        can_flee = true,             -- Set false to prevent mob from ever fleeing
+        flee_threshold = 12,         -- HP below which mob runs away (default: 25% max HP)
+        flee_ratio = 0.25,           -- Flee HP ratio (e.g. 0.25 for 25% max HP)
+        return_threshold = 30,       -- HP to exit fleeing and return to combat (default: 60% max HP)
+        return_ratio = 0.60,         -- Return HP ratio (e.g. 0.60 for 60% max HP)
+    },
+
+    -- Callbacks
+    on_regen_step = function(self, hp_added)
+        -- Custom sound or particle effects on each heal tick
+    end,
+    on_return_to_fight = function(self)
+        -- Triggered when mob recovers health above return threshold
+    end,
+})
+```
+
 ---
 
 ## Spawner Engine API
@@ -1772,6 +1920,59 @@ function x_mob_core.unlisten(event_name: string|"on_mob_death"|"on_mob_despawn"|
 
 ---
 
+## Miscellaneous Functions
+
+#### `x_mob_core.hide_health_bar`
+
+Hides or removes the dynamic overhead health bar on a mob entity.
+
+```lua
+function x_mob_core.hide_health_bar(self: table, remove_completely?: boolean)
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `remove_completely` (`boolean?`): If true, destroys child entity; otherwise sets is_visible = false
+
+#### `x_mob_core.show_health_bar`
+
+Displays or updates the dynamic overhead health bar on a mob entity.
+
+```lua
+function x_mob_core.show_health_bar(self: table, cur_hp?: number, max_hp?: number)
+  -> shown: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `cur_hp` (`number?`): Current health (defaults to self.hp)
+* `max_hp` (`number?`): Maximum health (defaults to self.hp_max)
+
+**Returns:**
+
+* `shown` (`boolean`): True if health bar is shown or updated
+
+#### `x_mob_core.update_health_bar`
+
+Forces an update of the health bar based on current mob HP.
+
+```lua
+function x_mob_core.update_health_bar(self: table)
+  -> shown: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+
+**Returns:**
+
+* `shown` (`boolean`): True if health bar was updated
+
+---
+
 ## Registries & State Tables
 
 | Registry / Table | Type | Description |
@@ -1782,7 +1983,7 @@ function x_mob_core.unlisten(event_name: string|"on_mob_death"|"on_mob_despawn"|
 | `x_mob_core.fast_pathfinder` | `table` | Time-sliced coroutine A* pathfinding engine |
 | `x_mob_core.lifecycle` | `table<string, table>` | Lifecycle & Entity Registration Entity registration wrapper and state machine |
 | `x_mob_core.min_heap` | `MinHeap` | Navigation & Pathfinding Binary min-heap priority queue |
-| `x_mob_core.mob_ai` | `table` | Motor & Steering Controller Motor and steering AI controller |
+| `x_mob_core.motor` | `table<string, table>` | Modular motor subsystems (node_cache, doors, surface, safety, locomotion, ai) |
 | `x_mob_core.mob_memory` | `table` | Short-term mob memory buffer |
 | `x_mob_core.pack` | `table<string, table>` | Multi-Agent Pack Coordination & Swarm Intelligence Multi-agent squad, coordination, and swarm subsystems |
 | `x_mob_core.path_cache` | `table` | Pre-cached node content ID registry for zero-overhead pathfinding |

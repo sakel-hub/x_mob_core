@@ -38,6 +38,7 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
   - Factions and allegiance system (`x_mob_core.are_allies`, `x_mob_core.are_enemies`).
   - Ballistic intercept aim prediction (`x_mob_core.predict_aim`).
   - Declarative loot drop tables with radial parabolic fountain drops (`x_mob_core.drop_items`).
+  - Procedural `[combine:` overhead health bars with 5-tier color palettes, proportional bounding box scaling, head clearance, and auto-resetting timeout windows.
   - Universal child, passenger, and arrow detachment on entity death.
 - **Pack Coordination & Swarm Intelligence**:
   - Pack UUID generation, leader-follower registry, and automatic orphan adoption.
@@ -83,7 +84,12 @@ x_mob_core/
 │   ├── fast_pathfinder.lua  # Volumetric raycasts and 3D A* search
 │   └── mob_memory.lua       # Spatial memory blackboard
 ├── motor/
-│   └── mob_ai.lua           # Motor controller, steering, climbing, swimming
+│   ├── node_cache.lua       # Cached VoxelArea & node lookups
+│   ├── doors.lua            # Door opening detection and interaction
+│   ├── surface.lua          # Surface alignment and rotation interpolation
+│   ├── safety.lua           # Aquatic detection, shore finding, step safety checks
+│   ├── locomotion.lua       # Yaw, velocity, liquid buoyancy, wall collision, movement
+│   └── mob_ai.lua           # Navigation coordinator (pursuit-gating, wander/move steps)
 ├── animation/
 │   └── animator.lua         # glTF multi-track dispatcher
 ├── combat/
@@ -173,6 +179,33 @@ x_mob_core.register_mob("mymod:goblin", {
     drops = {
         {name = "default:gold_lump", chance = 0.25, min = 1, max = 2},
         {name = "default:flint", chance = 0.50, min = 1, max = 3},
+    },
+
+    -- Optional Overhead Health Bar (Enabled by default; fully customizable)
+    health_bar = {
+        enabled = true,                     -- Enable overhead health bar for this mob
+        width = 64,                         -- Texture canvas width in px
+        height = 8,                         -- Texture canvas height in px
+        timeout = 4.0,                      -- Duration before auto-hiding (resets on damage)
+        auto_scale = true,                  -- Proportional scaling relative to mob bounding box
+        spacing = 0.35,                     -- Vertical clearance above collisionbox top
+        colors = {
+            { threshold = 0.80, color = "#00FF00" }, -- Emerald Green
+            { threshold = 0.60, color = "#7CFC00" }, -- Lime
+            { threshold = 0.40, color = "#FFD700" }, -- Gold
+            { threshold = 0.20, color = "#FF8C00" }, -- Dark Orange
+            { threshold = 0.00, color = "#FF2200" }, -- Crimson Red
+        },
+    },
+
+    -- Health Regeneration & Tactical Fleeing (Built-in default: 0.5 HP/s while running away)
+    health_regen = {
+        rate = 1.0,                         -- HP regenerated per second (default: 0.5)
+        overlay = true,                     -- Flash white texture overlay on heal tick (default: true)
+        overlay_color = "^[colorize:#FFFFFF60", -- Custom overlay tint (default: white)
+        passive = false,                    -- Enable passive recovery when not fleeing (default: false)
+        flee_threshold = 10,                -- HP to trigger fleeing (default: 25% max HP)
+        return_threshold = 24,              -- HP to exit fleeing & re-engage (default: 60% max HP)
     },
 
     -- Optional Pack Mechanics (Handled automatically by x_mob_core)
