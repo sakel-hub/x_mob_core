@@ -36,7 +36,7 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
   - Directional damage particles (configurable blood, ichor, smoke, spectral, sparks) and damage indicator flashing.
   - Liquid knockback dampening and configurable knockback resistance multipliers.
   - Factions and allegiance system (`x_mob_core.are_allies`, `x_mob_core.are_enemies`).
-  - Ballistic intercept aim prediction (`x_mob_core.predict_aim`).
+  - Ballistic intercept aim prediction (`x_mob_core.predict_aim`) and projectile flight/collision pipeline (`x_mob_core.step_projectile`, `x_mob_core.is_valid_projectile_target`).
   - Declarative loot drop tables with radial parabolic fountain drops (`x_mob_core.drop_items`).
   - Procedural `[combine:` overhead health bars with 5-tier color palettes, proportional bounding box scaling, head clearance, and auto-resetting timeout windows.
   - Universal child, passenger, and arrow detachment on entity death.
@@ -97,7 +97,7 @@ x_mob_core/
 │   ├── knockback.lua        # Knockback physics dampening
 │   ├── effects.lua          # Damage indication and directional particles
 │   ├── factions.lua         # Faction allegiance and relationship checks
-│   ├── shooter.lua          # Predictive intercept projectile aiming
+│   ├── shooter.lua          # Predictive intercept aiming, kiting, and projectile pipeline
 │   ├── loot.lua             # Radial parabolic item drops and declarative drop tables
 │   └── detachment.lua       # Child, passenger, and arrow detachment on death
 ├── spawning/

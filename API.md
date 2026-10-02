@@ -366,6 +366,31 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `tall_obstacle` | `table<integer, boolean>` |  |
 | `walkable` | `table<integer, boolean>` |  |
 
+### `ProjectileStepOptions`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `allow_allies` | `boolean?` | If true, permits colliding with and damaging faction allies |
+| `allow_players` | `boolean?` | If false, ignores players during collision raycasts (default: true) |
+| `damage` | `number?` | Impact damage dealt to entity if self._damage is unset (default: 5) |
+| `ignore_entities` | `(string[]|table<string, boolean>)?` | Specific entity names to ignore |
+| `lifetime` | `number?` | Maximum flight duration before expiration (default: 4.0) |
+| `on_hit` | `fun(self: table, hit_obj: ObjectRef?, hit_pos: Vector)?` | General impact callback called for any hit |
+| `on_hit_node` | `fun(self: table, hit_pos: Vector, node: table)?` | Callback triggered when impacting a solid node |
+| `on_hit_object` | `fun(self: table, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector)?` | Custom object punch callback |
+| `on_step` | `fun(self: table, dtime: number, pos: Vector)?` | Step callback triggered every frame during flight |
+| `radius` | `number?` | Proximity collision fallback radius in nodes (default: 1.5) |
+| `remove_on_hit` | `boolean?` | Whether to remove projectile entity on impact (default: true) |
+| `rotate` | `boolean?` | Whether to automatically orient visual model along velocity vector (default: true) |
+
+### `ProjectileTargetOptions`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `allow_allies` | `boolean?` | If true, permits targeting faction allies (default: false) |
+| `allow_players` | `boolean?` | If false, ignores human players (default: true) |
+| `ignore_entities` | `(string[]|table<string, boolean>)?` | Technical entity names to ignore (e.g. {"x_mobs:archer_arrow"}) |
+
 ### `ShoalConfigDef`
 
 | Field | Type | Description |
@@ -1470,6 +1495,25 @@ function x_mob_core.indicate_damage(obj: ObjectRef)
 
 * `obj` (`ObjectRef`): Entity object to flash
 
+#### `x_mob_core.is_valid_projectile_target`
+
+Validates whether an object is a targetable enemy for a projectile or shooter mob. Automatically filters out invalid references, the projectile itself, the firing shooter, engine built-ins (`__builtin:item`, `__builtin:falling_node`), utility entities (`x_mob_core:health_bar`), sister projectiles, and faction allies.
+
+```lua
+function x_mob_core.is_valid_projectile_target(source_or_proj: any, obj: any, options?: ProjectileTargetOptions)
+  -> is_valid: boolean
+```
+
+**Parameters:**
+
+* `source_or_proj` (`any`): Firing mob or projectile instance
+* `obj` (`any`): Candidate target ObjectRef
+* `options` (`ProjectileTargetOptions?`): Target filtering options
+
+**Returns:**
+
+* `is_valid` (`boolean`): True if targetable enemy
+
 #### `x_mob_core.predict_aim`
 
 Predicts target intercept position and direction based on target velocity and projectile speed.
@@ -1507,6 +1551,29 @@ function x_mob_core.spawn_damage_particles(obj: ObjectRef, puncher?: ObjectRef, 
 * `dir` (`Vector?`): Strike/knockback direction vector
 * `damage` (`number?`): Damage dealt
 * `def` (`table?`): Entity definition table
+
+#### `x_mob_core.step_projectile`
+
+Steps a projectile entity in flight, handling visual rotation, lifetime expiration, continuous collision raycasting, proximity fallback hit detection, node collision, damage application, and step/impact callbacks.
+
+```lua
+function x_mob_core.step_projectile(self: table, dtime: number, options?: ProjectileStepOptions)
+  -> hit: boolean
+  2. hit_obj: ObjectRef|nil
+  3. hit_pos: Vector|nil
+```
+
+**Parameters:**
+
+* `self` (`table`): Projectile LuaEntity table
+* `dtime` (`number`): Delta time in seconds
+* `options` (`ProjectileStepOptions?`): Flight and collision options
+
+**Returns:**
+
+* `hit` (`boolean`): True if projectile collided with target or solid node, or expired
+* `hit_obj` (`ObjectRef|nil`): Target object collided with
+* `hit_pos` (`Vector|nil`): Impact location in world coordinates
 
 #### `x_mob_core.strip_damage_mod`
 
