@@ -26,7 +26,7 @@ local function spawn_mob_group(spawn_pos, def, source)
 
 	-- Check how many can spawn without exceeding active_object_count or total density cap
 	local max_allowed = def.active_object_count or 1
-	local max_total = def.max_total_in_radius or (conditions and conditions.MAX_TOTAL_RADIUS_MOBS) or 8
+	local max_total = def.max_total_in_radius or conditions.MAX_TOTAL_RADIUS_MOBS or 8
 	local existing_count, existing_total = conditions.count_mobs_in_radius(spawn_pos, SPAWN_MAX_DIST, def.mob_name)
 
 	local remaining_quota = max_allowed - existing_count
@@ -38,7 +38,7 @@ local function spawn_mob_group(spawn_pos, def, source)
 	local to_spawn = math.min(group_size, remaining_quota, remaining_total)
 	local spawned = 0
 
-	local mdef = x_mob_core and x_mob_core.registered_mobs and x_mob_core.registered_mobs[def.mob_name]
+	local mdef = x_mob_core.registered_mobs[def.mob_name]
 	local is_aquatic = def.aquatic or def.is_aquatic or (mdef and (mdef.shoal or mdef.is_aquatic))
 	local base_spawn_pos = spawn_pos
 	if is_aquatic then
@@ -73,7 +73,7 @@ local function spawn_mob_group(spawn_pos, def, source)
 					local n_und = core.get_node(check_under)
 					if n_cur.name == "air" and n_und.name ~= "air" and n_und.name ~= "ignore" then
 						local ndef = core.registered_nodes[n_und.name]
-						if ndef and ndef.walkable then
+						if ndef and ndef.walkable and not (def._parsed_exclude_nodes and def._parsed_exclude_nodes[n_und.name]) then
 							candidate_ground = check_pos
 							break
 						end

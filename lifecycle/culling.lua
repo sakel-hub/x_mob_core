@@ -152,7 +152,7 @@ function culling.remove_mob(self, def, reason)
 		self._despawn_handled = true
 		def.on_despawn(self, reason)
 	end
-	if x_mob_core and x_mob_core.emit and not self._despawn_emitted then
+	if not self._despawn_emitted then
 		self._despawn_emitted = true
 		x_mob_core.emit("on_mob_despawn", self, reason)
 	end

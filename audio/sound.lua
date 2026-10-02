@@ -46,7 +46,7 @@ function sound.play(self, sound_type, overrides)
 	end
 
 	local sound_tbl = self_tbl and self_tbl.sounds
-	if not sound_tbl and self_tbl and self_tbl.name and x_mob_core.registered_mobs then
+	if not sound_tbl and self_tbl and self_tbl.name then
 		local reg = x_mob_core.registered_mobs[self_tbl.name]
 		sound_tbl = reg and reg.sounds
 	end
@@ -187,7 +187,7 @@ function sound.update(self, dtime)
 	end
 
 	local sound_tbl = self.sounds
-	if not sound_tbl and self.name and x_mob_core.registered_mobs then
+	if not sound_tbl and self.name then
 		local reg = x_mob_core.registered_mobs[self.name]
 		sound_tbl = reg and reg.sounds
 	end

@@ -128,9 +128,22 @@
 ---@field sound? string Sound identifier to play on drop
 ---@field killer? ObjectRef Killer object/player if applicable
 
+---@class HealthRegenDef
+---@field rate? number HP regenerated per second while running away or passively (default: 0.5)
+---@field enabled? boolean Whether health regeneration is enabled (default: true)
+---@field overlay? boolean Whether visual texture overlay flashes on regeneration (default: true)
+---@field overlay_color? string Custom texture modifier overlay string (default: "^[colorize:#FFFFFF60")
+---@field passive? boolean Whether regeneration occurs passively at all times (default: false)
+---@field flee_threshold? number Absolute HP threshold below which mob flees (default: nil / 25% max)
+---@field flee_ratio? number HP ratio below which mob flees (default: 0.25)
+---@field return_threshold? number Absolute HP threshold to exit fleeing and return to combat (default: nil / 60% max)
+---@field return_ratio? number HP ratio to exit fleeing and return to combat (default: 0.60)
+
 ---@class MobRegistrationDef
 ---@field textures? string|string[]|(string[])[] Texture or variations list (preferred in initial_properties)
 ---@field initial_properties table Luanti ObjectRef properties (hp_max, collisionbox, mesh, visual_size, textures, etc.)
+---@field collisionbox? number[] Optional 6-element collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? table|number[] Optional selection box: {minx, miny, minz, maxx, maxy, maxz}
 ---@field armor_groups? table<string, number> Luanti armor groups (e.g. {fleshy = 80})
 ---@field knockback_mult? number Knockback impulse multiplier (0 for unyielding/immune, default: 1.5)
 ---@field faction? string|string[] Faction tag or list of faction tags (default: "monsters")
@@ -141,10 +154,7 @@
 ---@field pursuit_speed? number Pursuit running speed (default: 3.5)
 ---@field wander_speed? number Wandering patrol speed (default: 1.5)
 ---@field flee_speed? number Fleeing speed when low on health (default: 4.0)
----@field flee_hp_threshold? number HP value below which mob enters fleeing (default: nil / 25% max)
----@field return_hp_threshold? number HP threshold to exit fleeing and return to combat (default: nil / 60%)
----@field regen_rate? number HP regenerated per second while fleeing or passively (default: 0.5)
----@field passive_regen? boolean Whether mob regenerates health passively without needing to enter fleeing state
+---@field health_regen? number|boolean|HealthRegenDef Health regeneration rate, disable toggle, or configuration table
 ---@field on_regen_step? fun(self: table, hp_added: number) Optional callback executed on health regeneration tick
 ---@field on_return_to_fight? fun(self: table) Optional callback executed when mob recovers HP and exits fleeing
 ---@field can_wander? boolean Whether entity wanders when idle (default: true)
@@ -170,6 +180,7 @@
 ---@field shooter? ShooterConfigDef Ranged combat and kiting configuration
 ---@field sounds? string|MobSoundDef Acoustic sound feedback configuration
 ---@field damage_effect? DamageEffectDef|string|boolean Hit particle feedback (false/"none" disables)
+---@field health_bar? MobHealthBarConfig|boolean Overhead combat health bar configuration (false disables)
 ---@field drops? (DropEntryDef|string)[] Declarative loot drop table spawned on defeat
 ---@field drop_options? DropOptions Physics, particle, and sound overrides for mob drops
 ---@field custom_states? table<string, CustomStateDef> Custom state machine states
@@ -210,6 +221,26 @@
 ---@field repulsion_radius? number Separation radius in nodes (defaults to diameter + padding)
 ---@field repulsion_strength? number Anti-stacking separation push multiplier (default: 2.2)
 ---@field separation_padding? number Extra distance padding added on top of collisionbox diameter (default: 0.5)
+
+---@class MobHealthBarColorBand
+---@field threshold number Health ratio threshold (0.0 to 1.0)
+---@field color string Hex color string (e.g. "#00FF00")
+
+---@class MobHealthBarConfig
+---@field enabled? boolean Whether health bar is enabled for this mob (default: true)
+---@field width? integer Texture width in pixels (default: 64)
+---@field height? integer Texture height in pixels (default: 8)
+---@field border? integer Border thickness in pixels (default: 1)
+---@field border_color? string Hex color for outer border (default: "#111111")
+---@field empty_color? string Hex color for depleted health background track (default: "#330000")
+---@field colors? MobHealthBarColorBand[] List of color thresholds evaluated from highest to lowest
+---@field auto_scale? boolean Whether to proportionally scale visual_size to mob bounding box (default: true)
+---@field visual_size? Vector2d Explicit sprite visual size override in world coordinates
+---@field spacing? number Spacing in nodes above mob collisionbox top (default: 0.35)
+---@field offset_y? number Direct height offset override in nodes
+---@field timeout? number Duration in seconds before health bar auto-hides (default: 4.0)
+---@field auto_remove? boolean Whether to remove child entity on timeout (default: true)
+---@field glow? integer Light emission in dark environments 0..14 (default: 5)
 
 ---@class SpawnConfig
 ---@field nodes? string[] Valid ground node names or group filters (e.g. "group:water")

@@ -7,18 +7,10 @@
 ---@class EnvironmentSubsystem
 local environment = {}
 
-local scratch_probe = {x = 0, y = 0, z = 0}
+local modpath = core.get_modpath("x_mob_core") or "."
+local utils = dofile(modpath .. "/core/utils.lua")
 
---- Checks if coordinates represent a water node
----@param pos Vector World position
----@return boolean is_water
-local function is_water_at(pos)
-	scratch_probe.x = math.floor(pos.x + 0.5)
-	scratch_probe.y = math.floor(pos.y + 0.5)
-	scratch_probe.z = math.floor(pos.z + 0.5)
-	local node = core.get_node(scratch_probe)
-	return core.get_item_group(node.name, "water") > 0
-end
+local scratch_probe = {x = 0, y = 0, z = 0}
 
 --- Throttled step processor evaluating environmental hazards
 ---@param self table Mob entity instance
@@ -103,7 +95,7 @@ function environment.step(self, dtime, def, combat_handler)
 		scratch_probe.x = pos.x
 		scratch_probe.y = torso_y
 		scratch_probe.z = pos.z
-		local in_water = is_water_at(scratch_probe)
+		local in_water = utils.is_water_node(scratch_probe)
 		if not in_water then
 			self._air_timer = (self._air_timer or 0) + elapsed
 			local grace = def.air_grace_period or 5.0
@@ -120,7 +112,7 @@ function environment.step(self, dtime, def, combat_handler)
 		scratch_probe.x = pos.x
 		scratch_probe.y = head_y
 		scratch_probe.z = pos.z
-		local head_in_water = is_water_at(scratch_probe)
+		local head_in_water = utils.is_water_node(scratch_probe)
 		local can_drown = not (
 			immunities.drown or immunities.water or def.can_breathe_water or def.amphibious or
 			(self.factions and (self.factions.undead or self.factions.aquatic or self.factions.golem))

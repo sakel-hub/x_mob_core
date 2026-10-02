@@ -17,7 +17,7 @@ local function is_mob_entity(ent)
 	if ent.name == "__builtin:item" or ent.name == "__builtin:falling_node" then
 		return false
 	end
-	if ent._is_x_mob or (x_mob_core and x_mob_core.registered_mobs and x_mob_core.registered_mobs[ent.name]) then
+	if ent._is_x_mob or x_mob_core.registered_mobs[ent.name] then
 		return true
 	end
 	if ent.hp or ent.health or ent.hp_max or ent._cmi_is_mob then

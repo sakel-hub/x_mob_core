@@ -50,6 +50,100 @@ function utils.shallow_copy(tbl)
 	return copy
 end
 
+local scratch_water_probe = {x = 0, y = 0, z = 0}
+
+--- Checks if a world position or coordinate represents a water node.
+---@param pos_or_x Vector|number World position table or X coordinate
+---@param y? number Y coordinate
+---@param z? number Z coordinate
+---@return boolean is_water
+function utils.is_water_node(pos_or_x, y, z)
+	if type(pos_or_x) == "table" then
+		scratch_water_probe.x = math.floor(pos_or_x.x + 0.5)
+		scratch_water_probe.y = math.floor(pos_or_x.y + 0.5)
+		scratch_water_probe.z = math.floor(pos_or_x.z + 0.5)
+	else
+		scratch_water_probe.x = math.floor(pos_or_x + 0.5)
+		scratch_water_probe.y = math.floor(y + 0.5)
+		scratch_water_probe.z = math.floor(z + 0.5)
+	end
+	local node = core.get_node(scratch_water_probe)
+	return core.get_item_group(node.name, "water") > 0
+end
+
+--- Checks if a world position or coordinate represents a walkable solid node.
+---@param pos_or_x Vector|number World position table or X coordinate
+---@param y? number Y coordinate
+---@param z? number Z coordinate
+---@return boolean is_walkable
+function utils.is_walkable_node(pos_or_x, y, z)
+	if type(pos_or_x) == "table" then
+		scratch_water_probe.x = math.floor(pos_or_x.x + 0.5)
+		scratch_water_probe.y = math.floor(pos_or_x.y + 0.5)
+		scratch_water_probe.z = math.floor(pos_or_x.z + 0.5)
+	else
+		scratch_water_probe.x = math.floor(pos_or_x + 0.5)
+		scratch_water_probe.y = math.floor(y + 0.5)
+		scratch_water_probe.z = math.floor(z + 0.5)
+	end
+	local node = core.get_node(scratch_water_probe)
+	local ndef = core.registered_nodes[node.name]
+	return (ndef and ndef.walkable) or false
+end
+
+--- Determines safe submerged vertical range for an entity in the water column.
+--- Strictly guarantees minimum 2-node clearance below the air surface.
+---@param pos Vector World position
+---@param _pad? number|table Optional padding
+---@return number safe_min_y Lowest safe Y coordinate (above seabed)
+---@return number safe_max_y Highest safe Y coordinate (at least 2 nodes below surface air)
+---@return boolean is_shallow True if water depth is under 3.5 nodes
+---@return number surface_y Highest water block Y
+---@return number floor_y Lowest water block Y
+function utils.get_water_column_bounds(pos, _pad)
+	local px = math.floor(pos.x + 0.5)
+	local pz = math.floor(pos.z + 0.5)
+	local py = math.floor(pos.y + 0.5)
+
+	if not utils.is_water_node(px, py, pz) then
+		if utils.is_water_node(px, py - 1, pz) then
+			py = py - 1
+		elseif utils.is_water_node(px, py + 1, pz) then
+			py = py + 1
+		end
+	end
+
+	local surface_y = py
+	for dy = 1, 16 do
+		if utils.is_water_node(px, py + dy, pz) then
+			surface_y = py + dy
+		else
+			break
+		end
+	end
+
+	local floor_y = py
+	for dy = 1, 16 do
+		if utils.is_water_node(px, py - dy, pz) then
+			floor_y = py - dy
+		else
+			break
+		end
+	end
+
+	local safe_max_y = (surface_y + 0.5) - 2.0
+	local safe_min_y = (floor_y - 0.5) + 1.0
+
+	local is_shallow = false
+	if safe_min_y > safe_max_y then
+		is_shallow = true
+		safe_max_y = (surface_y + 0.5) - 2.0
+		safe_min_y = safe_max_y - 0.5
+	end
+
+	return safe_min_y, safe_max_y, is_shallow, surface_y, floor_y
+end
+
 --- Line of sight check between two points using native engine C++ ray traversal with liquid penetration support
 ---@param p1 Vector
 ---@param p2 Vector
@@ -214,21 +308,7 @@ function utils.avoid_solid_nodes(target_pos, safe_origin, look_dir)
 
 		if math.abs(target_pos.y - safe_origin.y) > 0.5 then
 			-- Floating or elevated entity: adapt cruising height to available headroom
-			safe_y = (hr < 2.3) and (safe_origin.y + 1.05) or target_pos.y
-
-			-- Check lower elevations in case cave roof or ceiling forced entity into block
-			if target_pos.y > safe_origin.y then
-				avoid_probe.x = math.floor(target_pos.x + 0.5)
-				avoid_probe.z = math.floor(target_pos.z + 0.5)
-				for dy = -0.4, -1.8, -0.4 do
-					avoid_probe.y = math.floor(target_pos.y + dy + 0.5)
-					local l_node = core.get_node_or_nil(avoid_probe)
-					local l_def = l_node and core.registered_nodes[l_node.name]
-					if l_def and not l_def.walkable and (not l_def.liquidtype or l_def.liquidtype == "none") then
-						return {x = target_pos.x, y = target_pos.y + dy, z = target_pos.z}
-					end
-				end
-			end
+			safe_y = (hr < 2.3) and (safe_origin.y + math.max(1.15, hr - 0.35)) or target_pos.y
 		else
 			-- Ground-level mob or spawner: check 1-node step-up onto ledge/stair first
 			avoid_probe.y = math.floor(target_pos.y + 1.5)

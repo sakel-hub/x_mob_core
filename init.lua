@@ -9,7 +9,7 @@ local modpath = core.get_modpath("x_mob_core")
 dofile(modpath .. "/api.lua")
 
 -- Seed pseudo-random generator with high-resolution clock entropy
-local seed = (core and core.get_us_time and core.get_us_time()) or os.time()
+local seed = core.get_us_time() or os.time()
 math.randomseed(tonumber(tostring(seed):reverse():sub(1, 9)) or seed)
 for _ = 1, 3 do math.random() end
 
