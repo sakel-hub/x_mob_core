@@ -42,6 +42,22 @@
 ---@field sound? string Sound played when shooting (default: "shoot")
 ---@field predict_aim? boolean Whether to apply aim lead prediction based on target velocity (default: false)
 
+---@class ProjectileTargetOptions
+---@field allow_players? boolean Whether players are valid targets (default: true)
+---@field allow_allies? boolean Whether friendly/allied entities can be hit (default: false)
+---@field ignore_entities? string[]|table<string, boolean> Additional entity technical names to ignore
+
+---@class ProjectileStepOptions: ProjectileTargetOptions
+---@field damage? number Damage applied when impacting target without on_hit_object (default: self._damage or 5)
+---@field lifetime? number Maximum projectile lifetime in seconds before removal (default: 4.0)
+---@field radius? number Proximity fallback collision radius in nodes (default: 1.5)
+---@field rotate? boolean Whether to automatically rotate projectile along velocity vector (default: true)
+---@field remove_on_hit? boolean Whether to remove projectile entity upon impact (default: true)
+---@field on_hit_object? fun(self: table, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector) Object hit callback
+---@field on_hit_node? fun(self: table, hit_pos: Vector, node: table) Callback when hitting a solid node
+---@field on_hit? fun(self: table, hit_obj: ObjectRef|nil, hit_pos: Vector) Callback executed on any impact
+---@field on_step? fun(self: table, dtime: number, pos: Vector) Callback executed on every unobstructed flight step
+
 ---@class CustomStateDef
 ---@field enter? fun(self: table) Called when state is entered
 ---@field step fun(self: table, dtime: number): string|nil State step tick; return state name to transition

@@ -344,6 +344,35 @@ function x_mob_core.predict_aim(origin, tgt_pos, tgt_vel, proj_speed)
 	return x_mob_core.combat.shooter.predict_aim(origin, tgt_pos, tgt_vel, proj_speed)
 end
 
+---Validates whether an object is a targetable enemy for a projectile or shooter mob.
+---Filters out dropped items (__builtin:item), falling nodes, utility entities, shooter self-hits, and allies.
+---@param source_or_proj ObjectRef|table Projectile entity instance, shooter mob, or ObjectRef
+---@param obj ObjectRef Target object to test
+---@param options? ProjectileTargetOptions Optional configuration table
+---@return boolean is_valid True if target is attackable, false if ignored
+function x_mob_core.is_valid_projectile_target(source_or_proj, obj, options)
+	return x_mob_core.combat.shooter.is_valid_target(source_or_proj, obj, options)
+end
+
+---Processes a standard projectile flight step: ballistics rotation, lifetime expiry,
+---continuous raycasting, proximity collision, and impact handling.
+---@param self table Projectile LuaEntity instance
+---@param dtime number Step delta time
+---@param options? ProjectileStepOptions Projectile configuration options
+---@return boolean hit True if the projectile impacted an object or solid node
+---@return ObjectRef|nil hit_obj Direct object impacted, if any
+---@return Vector|nil hit_pos World coordinate of the impact
+function x_mob_core.step_projectile(self, dtime, options)
+	return x_mob_core.combat.shooter.step_projectile(self, dtime, options)
+end
+
+---Agnostically checks whether a LuaEntity is classified as a projectile or arrow.
+---@param ent table LuaEntity table
+---@return boolean is_projectile
+function x_mob_core.is_projectile(ent)
+	return x_mob_core.combat.shooter.is_projectile(ent)
+end
+
 -- Loot & Item Drops
 
 ---Spawns a single item with a physical parabolic launch arc.
