@@ -47,6 +47,7 @@ function swarm.init_entity(self, def, data)
 		self.saved_data.pack_id = self.pack_id
 		self.follower_index = 0
 		self.pack_followers = {}
+		self.pack_max_followers = (cfg.size or 5) - 1
 		if not self.saved_data.cluster_spawned then
 			self.saved_data.cluster_spawned = true
 			self._needs_cluster_spawning = true

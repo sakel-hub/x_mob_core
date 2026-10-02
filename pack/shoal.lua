@@ -39,27 +39,8 @@ local function approach_angle(current, target, max_step)
 	end
 end
 
---- Checks if a node at world coordinates represents navigable water
----@param x number X coordinate
----@param y number Y coordinate
----@param z number Z coordinate
----@return boolean is_water
-local function is_water_node(x, y, z)
-	scratch_probe.x = math.floor(x + 0.5)
-	scratch_probe.y = math.floor(y + 0.5)
-	scratch_probe.z = math.floor(z + 0.5)
-	local node = core.get_node(scratch_probe)
-	return core.get_item_group(node.name, "water") > 0
-end
-
---- Checks if coordinates are navigable water
----@param x number X coordinate
----@param y number Y coordinate
----@param z number Z coordinate
----@return boolean is_navigable
-local function is_navigable_water(x, y, z)
-	return is_water_node(x, y, z)
-end
+local is_water_node = utils.is_water_node
+local is_navigable_water = utils.is_water_node
 
 -- Pre-allocated horizontal probe directions for strict 2-node boundary buffer (zero allocation)
 local BOUNDARY_PROBES = {
@@ -91,82 +72,17 @@ local DEEP_SEEK_PROBES = {
 local function is_safe_deep_water(x, y, z)
 	-- Must be water at body level
 	if not is_water_node(x, y, z) then return false end
-	-- Must be water at 1 and 2 nodes above (strictly prevents air within 2 nodes above!)
-	if not is_water_node(x, y + 1.0, z) then return false end
-	if not is_water_node(x, y + 2.0, z) then return false end
-	-- Must have clearance from shore / dry land in all cardinal directions at 2.0 nodes
-	if not is_water_node(x + 2.0, y, z) then return false end
-	if not is_water_node(x - 2.0, y, z) then return false end
-	if not is_water_node(x, y, z + 2.0) then return false end
-	if not is_water_node(x, y, z - 2.0) then return false end
-	-- Check diagonal 1.4m clearance as well
-	if not is_water_node(x + 1.4, y, z + 1.4) then return false end
-	if not is_water_node(x - 1.4, y, z + 1.4) then return false end
-	if not is_water_node(x + 1.4, y, z - 1.4) then return false end
-	if not is_water_node(x - 1.4, y, z - 1.4) then return false end
+	-- Submerged vertical clearance for body height
+	if not is_water_node(x, y + 0.8, z) then return false end
+	if not is_water_node(x, y - 0.8, z) then return false end
+	-- Lateral clearance from shore / dry land in cardinal directions
+	if not is_water_node(x + 1.2, y, z) then return false end
+	if not is_water_node(x - 1.2, y, z) then return false end
+	if not is_water_node(x, y, z + 1.2) then return false end
+	if not is_water_node(x, y, z - 1.2) then return false end
 	return true
 end
-
---- Determines safe submerged vertical range for an entity in the water column
---- Strictly guarantees minimum 2-node clearance below the air surface
----@param pos Vector World position
----@param _pad? table Collision padding table
----@return number safe_min_y Lowest safe Y coordinate (above seabed)
----@return number safe_max_y Highest safe Y coordinate (at least 2 nodes below surface air)
----@return boolean is_shallow True if water depth is under 3.5 nodes
----@return number surface_y Highest water block Y
----@return number floor_y Lowest water block Y
-local function get_water_column_bounds(pos, _pad)
-	local px = math.floor(pos.x + 0.5)
-	local pz = math.floor(pos.z + 0.5)
-	local py = math.floor(pos.y + 0.5)
-
-	-- If entity is not currently in a water node, anchor to nearest vertical water
-	if not is_water_node(px, py, pz) then
-		if is_water_node(px, py - 1, pz) then
-			py = py - 1
-		elseif is_water_node(px, py + 1, pz) then
-			py = py + 1
-		end
-	end
-
-	-- Probe upward to find surface water node
-	local surface_y = py
-	for dy = 1, 16 do
-		if is_water_node(px, py + dy, pz) then
-			surface_y = py + dy
-		else
-			break
-		end
-	end
-
-	-- Probe downward to find seabed floor water node
-	local floor_y = py
-	for dy = 1, 16 do
-		if is_water_node(px, py - dy, pz) then
-			floor_y = py - dy
-		else
-			break
-		end
-	end
-
-	-- Strict 2-node safety clearance from surface air (air starts at surface_y + 0.5)
-	-- To stay >= 2.0 nodes from air, Y must not exceed (surface_y + 0.5) - 2.0 = surface_y - 1.5
-	local safe_max_y = (surface_y + 0.5) - 2.0
-	-- Seabed clearance (seabed starts at floor_y - 0.5)
-	local safe_min_y = (floor_y - 0.5) + 1.0
-
-	local is_shallow = false
-	if safe_min_y > safe_max_y then
-		-- Shallow water (< 3.5 nodes deep): cannot satisfy 2-node clearance from both air and floor
-		-- Flag shallow so mob repels towards deep open water, while keeping safe_max_y strictly submerged
-		is_shallow = true
-		safe_max_y = (surface_y + 0.5) - 2.0
-		safe_min_y = safe_max_y - 0.5
-	end
-
-	return safe_min_y, safe_max_y, is_shallow, surface_y, floor_y
-end
+local get_water_column_bounds = utils.get_water_column_bounds
 
 --- Calculates critically damped vertical velocity toward the safe water column depth
 ---@param pos Vector Entity world position
@@ -349,6 +265,7 @@ function shoal.init_entity(self, def, data)
 		self.pack_id = self.saved_data.pack_id or utils.generate_uuid()
 		self.follower_index = 0
 		self.pack_followers = {}
+		self.pack_max_followers = (cfg.size or 6) - 1
 		if not self.saved_data.cluster_spawned then
 			self.saved_data.cluster_spawned = true
 			self._needs_cluster_spawning = true
@@ -482,19 +399,24 @@ function shoal.step_leader(self, dtime, def, pos)
 		for f = 1, #self.pack_followers do
 			local f_obj = self.pack_followers[f]
 			if f_obj and f_obj:is_valid() then
-				local fp = f_obj:get_pos()
-				if fp then
-					local fd = vector.distance(pos, fp)
-					if fd > max_fol_dist then max_fol_dist = fd end
+				local fent = f_obj:get_luaentity()
+				if fent and (not fent.leader_obj or fent.leader_obj == self.object) then
+					local fp = f_obj:get_pos()
+					if fp then
+						local fd = vector.distance(pos, fp)
+						if fd <= 28.0 and fd > max_fol_dist then
+							max_fol_dist = fd
+						end
+					end
 				end
 			end
 		end
 		if max_fol_dist > 18.0 then
-			speed = speed * 0.20 -- wait for scattered school to reassemble
+			speed = speed * 0.40 -- allow trailing followers to catch up without complete paralysis
 		elseif max_fol_dist > 12.0 then
-			speed = speed * 0.45 -- slow cruise to allow catch-up
+			speed = speed * 0.60
 		elseif max_fol_dist > 8.0 then
-			speed = speed * 0.70
+			speed = speed * 0.80
 		end
 	end
 

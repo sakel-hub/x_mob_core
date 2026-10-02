@@ -10,81 +10,10 @@ local utils = dofile(core.get_modpath("x_mob_core") .. "/core/utils.lua")
 
 -- Pre-allocated module-level scratch tables for zero-allocation cluster spawning
 local scratch_pos = {x = 0, y = 0, z = 0}
-local scratch_probe = {x = 0, y = 0, z = 0}
 
---- Checks if a node at world coordinates represents navigable water
----@param x number X coordinate
----@param y number Y coordinate
----@param z number Z coordinate
----@return boolean is_water
-local function is_water_node(x, y, z)
-	scratch_probe.x = math.floor(x + 0.5)
-	scratch_probe.y = math.floor(y + 0.5)
-	scratch_probe.z = math.floor(z + 0.5)
-	local node = core.get_node(scratch_probe)
-	return core.get_item_group(node.name, "water") > 0
-end
-
---- Checks if a node at world coordinates is solid/walkable
----@param x number X coordinate
----@param y number Y coordinate
----@param z number Z coordinate
----@return boolean is_walkable
-local function is_walkable_node(x, y, z)
-	scratch_probe.x = math.floor(x + 0.5)
-	scratch_probe.y = math.floor(y + 0.5)
-	scratch_probe.z = math.floor(z + 0.5)
-	local node = core.get_node(scratch_probe)
-	local ndef = core.registered_nodes[node.name]
-	return (ndef and ndef.walkable) or false
-end
-
---- Determines safe submerged vertical range for an entity in the water column
---- Strictly guarantees minimum 2-node clearance below the air surface
----@param pos Vector World position
----@return number safe_min_y Lowest safe Y coordinate (above seabed)
----@return number safe_max_y Highest safe Y coordinate (at least 2 nodes below surface air)
-local function get_water_column_bounds(pos)
-	local px = math.floor(pos.x + 0.5)
-	local pz = math.floor(pos.z + 0.5)
-	local py = math.floor(pos.y + 0.5)
-
-	if not is_water_node(px, py, pz) then
-		if is_water_node(px, py - 1, pz) then
-			py = py - 1
-		elseif is_water_node(px, py + 1, pz) then
-			py = py + 1
-		end
-	end
-
-	local surface_y = py
-	for dy = 1, 16 do
-		if is_water_node(px, py + dy, pz) then
-			surface_y = py + dy
-		else
-			break
-		end
-	end
-
-	local floor_y = py
-	for dy = 1, 16 do
-		if is_water_node(px, py - dy, pz) then
-			floor_y = py - dy
-		else
-			break
-		end
-	end
-
-	local safe_max_y = (surface_y + 0.5) - 2.0
-	local safe_min_y = (floor_y - 0.5) + 1.0
-
-	if safe_min_y > safe_max_y then
-		safe_max_y = (surface_y + 0.5) - 2.0
-		safe_min_y = safe_max_y - 0.5
-	end
-
-	return safe_min_y, safe_max_y
-end
+local is_water_node = utils.is_water_node
+local is_walkable_node = utils.is_walkable_node
+local get_water_column_bounds = utils.get_water_column_bounds
 
 --- Registers an entity as a pack leader
 ---@param self table Mob instance
@@ -93,8 +22,8 @@ function squad.init_leader(self, config)
 	if not self.pack_id then
 		self.pack_id = config.pack_id or utils.generate_uuid()
 	end
+	self.pack_role = "leader"
 	self.pack_followers = {}
-	self.minions = self.pack_followers
 	self.pack_max_followers = config.max_followers or 3
 	self.pack_follower_type = config.follower_type
 end
@@ -115,11 +44,10 @@ end
 ---@return integer count
 ---@return table alive_followers
 function squad.clean_followers(self)
-	local followers = self.pack_followers or self.minions
+	local followers = self.pack_followers
 	if not followers then
 		followers = {}
 		self.pack_followers = followers
-		self.minions = followers
 		return 0, followers
 	end
 
@@ -129,7 +57,8 @@ function squad.clean_followers(self)
 		local keep = false
 		if utils.is_player_alive(obj) then
 			local ent = obj:get_luaentity()
-			if ent and (not self.pack_id or not ent.pack_id or ent.pack_id == self.pack_id) then
+			if ent and (not self.pack_id or not ent.pack_id or ent.pack_id == self.pack_id)
+				and (not ent.leader_obj or ent.leader_obj == self.object) then
 				keep = true
 			end
 		end
@@ -147,34 +76,56 @@ function squad.clean_followers(self)
 	end
 
 	self.pack_followers = followers
-	self.minions = followers
 	return #followers, followers
 end
 
 --- Registers a follower under a leader
 ---@param self table Leader mob instance
 ---@param follower_obj ObjectRef Follower entity object
----@return boolean added True if follower was newly registered, false if already present or invalid
-function squad.add_follower(self, follower_obj)
+---@param force? boolean If true, bypasses max_followers capacity limit (default: false)
+---@return boolean added True if follower was newly registered or reconfirmed, false if full or invalid
+function squad.add_follower(self, follower_obj, force)
 	if not follower_obj or not follower_obj:is_valid() then return false end
 	if not self.pack_followers then
 		self.pack_followers = {}
 	end
 
-	local ent = follower_obj:get_luaentity()
-	if ent then
-		ent.leader_obj = self.object
-		ent.shaman_obj = self.object
-		if self.pack_id then
-			ent.pack_id = self.pack_id
+	-- Check if already registered: refresh leader pointers idempotently
+	for i = 1, #self.pack_followers do
+		if self.pack_followers[i] == follower_obj then
+			local ent = follower_obj:get_luaentity()
+			if ent then
+				ent.leader_obj = self.object
+				if self.pack_id then
+					ent.pack_id = self.pack_id
+					if ent.saved_data then
+						ent.saved_data.pack_id = self.pack_id
+					end
+				end
+			end
+			return true
 		end
 	end
 
-	for i = 1, #self.pack_followers do
-		if self.pack_followers[i] == follower_obj then
+	local max_fol = self.pack_max_followers
+	if not force and max_fol then
+		squad.clean_followers(self)
+		if #self.pack_followers >= max_fol then
 			return false
 		end
 	end
+
+	local ent = follower_obj:get_luaentity()
+	if ent then
+		ent.leader_obj = self.object
+		if self.pack_id then
+			ent.pack_id = self.pack_id
+			if ent.saved_data then
+				ent.saved_data.pack_id = self.pack_id
+			end
+		end
+	end
+
 	table.insert(self.pack_followers, follower_obj)
 	return true
 end
@@ -183,7 +134,7 @@ end
 ---@param self table Leader mob instance
 ---@param follower_obj ObjectRef Follower entity object
 function squad.remove_follower(self, follower_obj)
-	local followers = self.pack_followers or self.minions
+	local followers = self.pack_followers
 	if not followers or not follower_obj then return end
 	for i = #followers, 1, -1 do
 		if followers[i] == follower_obj then
@@ -243,7 +194,7 @@ function squad.adopt_nearby_orphans(self, search_radius)
 				local ent = obj:get_luaentity()
 				if ent and matches_follower_type(self.pack_follower_type, ent.name) then
 					local has_valid_leader = ent.leader_obj and ent.leader_obj:is_valid()
-					if not ent.pack_id and not has_valid_leader then
+					if not has_valid_leader and (not ent.pack_id or ent.pack_id ~= self.pack_id) then
 						if squad.add_follower(self, obj) then
 							count = count + 1
 						end
@@ -257,7 +208,7 @@ end
 --- Disbands the pack and notifies all followers when the leader dies
 ---@param self table Leader mob instance
 function squad.handle_leader_death(self)
-	local followers = self.pack_followers or self.minions
+	local followers = self.pack_followers
 	if not followers then return end
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
 	for i = 1, #followers do
@@ -266,7 +217,10 @@ function squad.handle_leader_death(self)
 			local ent = obj:get_luaentity()
 			if ent and not ent.is_dead then
 				ent.leader_obj = nil
-				ent.shaman_obj = nil
+				ent.pack_id = nil
+				if ent.saved_data then
+					ent.saved_data.pack_id = nil
+				end
 				local on_lost = ent.pack_on_leader_lost or (ent.pack and ent.pack.on_leader_lost)
 				if type(on_lost) == "function" then
 					on_lost(ent, self)
@@ -278,7 +232,7 @@ function squad.handle_leader_death(self)
 						ent.memory.danger = {}
 					end
 					-- Retain target or inherit leader's killer/target
-					if not ent.target or not (x_mob_core and x_mob_core.is_player_alive(ent.target)) then
+					if not ent.target or not x_mob_core.is_player_alive(ent.target) then
 						local threat = self._killer or self.target
 						if threat and threat:is_valid() then
 							ent.target = threat
@@ -289,7 +243,7 @@ function squad.handle_leader_death(self)
 					ent.panic_timer = 5.0
 					if ent.memory then
 						ent.memory.flee_state = true
-						if pos and x_mob_core and x_mob_core.mob_memory then
+						if pos then
 							x_mob_core.mob_memory.record_danger(ent, pos, 15, 20.0)
 						end
 					end
@@ -298,7 +252,6 @@ function squad.handle_leader_death(self)
 		end
 	end
 	self.pack_followers = {}
-	self.minions = {}
 end
 
 --- Adopts nearby orphans and spawns missing followers radially around the leader
@@ -521,17 +474,38 @@ function squad.relink_follower(self, search_radius)
 			local ent = obj:get_luaentity()
 			if ent and (not self.pack_id or not ent.pack_id or ent.pack_id == self.pack_id) then
 				local is_leader = (ent.pack_role == "leader") or
-					(not self.pack_leader_type or ent.name == self.pack_leader_type or ent.name == self.name)
+					(ent.pack_role ~= "member" and (
+						(self.pack_leader_type and ent.name == self.pack_leader_type) or
+						(not self.pack_leader_type and ent.name == self.name and ent.pack_role == "leader")
+					))
 				if is_leader then
-					self.leader_obj = obj
-					if ent.pack_id then
-						self.pack_id = ent.pack_id
-						if self.saved_data then
-							self.saved_data.pack_id = ent.pack_id
+					local leader_max = ent.pack_max_followers
+					local has_space = true
+					if leader_max then
+						local cur_count = squad.clean_followers(ent)
+						local is_already_member = false
+						if ent.pack_followers then
+							for f_idx = 1, #ent.pack_followers do
+								if ent.pack_followers[f_idx] == self.object then
+									is_already_member = true
+									break
+								end
+							end
+						end
+						if not is_already_member and cur_count >= leader_max then
+							has_space = false
 						end
 					end
-					squad.add_follower(ent, self.object)
-					return true
+					if has_space and squad.add_follower(ent, self.object) then
+						self.leader_obj = obj
+						if ent.pack_id then
+							self.pack_id = ent.pack_id
+							if self.saved_data then
+								self.saved_data.pack_id = ent.pack_id
+							end
+						end
+						return true
+					end
 				end
 			end
 		end
@@ -571,6 +545,7 @@ function squad.elect_successor(self, search_radius)
 			new_leader_ent.follower_index = 0
 			new_leader_ent.leader_obj = nil
 			new_leader_ent.pack_followers = {}
+			new_leader_ent.pack_max_followers = self.pack_max_followers
 			if new_leader_ent.saved_data then
 				new_leader_ent.saved_data.is_follower = false
 				new_leader_ent.saved_data.follower_index = 0
