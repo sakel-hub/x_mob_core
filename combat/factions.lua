@@ -42,6 +42,10 @@ local function resolve_source(obj)
 		if obj._shooter and obj._shooter.is_valid and obj._shooter:is_valid() then
 			return obj._shooter:get_luaentity() or obj._shooter
 		end
+		if obj.get_luaentity then
+			local ent = obj:get_luaentity()
+			if ent then return ent end
+		end
 		if obj.object and obj.object.is_valid and obj.object:is_valid() then
 			return obj
 		end
@@ -87,7 +91,13 @@ function factions.get_factions(obj)
 	-- Lua entity
 	if type(resolved) == "table" then
 		if resolved.factions then
-			return resolved.factions
+			if type(resolved.factions) == "table" and not resolved.factions[1] then
+				return resolved.factions
+			end
+			return (factions.normalize_factions(resolved.factions))
+		end
+		if resolved.faction then
+			return (factions.normalize_factions(resolved.faction))
 		end
 		if resolved._def and (resolved._def.factions or resolved._def.faction) then
 			local set = factions.normalize_factions(resolved._def.factions or resolved._def.faction)
@@ -153,10 +163,8 @@ function factions.are_allies(a, b)
 	end
 
 	-- 3. Intersecting faction tags
-	local def_a = ent_a._def
-	local def_b = ent_b._def
-	local facts_a = ent_a.factions or (def_a and (def_a.factions or def_a.faction) and factions.get_factions(ent_a))
-	local facts_b = ent_b.factions or (def_b and (def_b.factions or def_b.faction) and factions.get_factions(ent_b))
+	local facts_a = factions.get_factions(ent_a)
+	local facts_b = factions.get_factions(ent_b)
 
 	if facts_a and facts_b then
 		for f in pairs(facts_a) do

@@ -30,7 +30,7 @@ function detachment.detach_attached_children(mob_obj)
 				child:set_pos({x = ppos.x, y = ppos.y + 0.2, z = ppos.z})
 			else
 				local ent = child:get_luaentity()
-				local is_arrow = ent and (ent._is_arrow or ent.is_arrow or (ent.name and ent.name:find("^x_bows:")))
+				local is_arrow = ent and (ent._is_arrow or ent.is_arrow or ent._is_projectile or ent.is_projectile)
 
 				if is_arrow then
 					-- Smart Drop for arrows
