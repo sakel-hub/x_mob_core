@@ -491,6 +491,8 @@ do
 	assert_test(def_table.regen_rate == nil, "No redundant flat regen_rate alias on def")
 	assert_test(def_table.flee_hp_threshold == nil, "No redundant flat flee_hp_threshold alias on def")
 	assert_test(def_table.return_hp_threshold == nil, "No redundant flat return_hp_threshold alias on def")
+	assert_test(def_table.health_regen.color == nil, "No redundant color alias in health_regen")
+	assert_test(def_table.health_regen.unlimited == nil, "No redundant unlimited alias in health_regen")
 
 	local def_disabled = {
 		initial_properties = { hp_max = 30 },

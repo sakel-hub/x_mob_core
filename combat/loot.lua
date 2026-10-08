@@ -4,24 +4,6 @@
 	and sparkling visual feedback upon mob defeat.
 ]]
 
----@class DropEntryDef
----@field name string Technical item name (e.g. "everness:quartz_crystal")
----@field min? integer Minimum count to drop (default: 1)
----@field max? integer Maximum count to drop (default: 1)
----@field chance? number Probability to drop between 0.0 and 1.0 (default: 1.0)
-
-
----@class DropOptions
----@field up_vel_min? number Minimum upward launch velocity (default: 4.6)
----@field up_vel_max? number Maximum upward launch velocity (default: 5.8)
----@field spread_min? number Minimum horizontal spread velocity (default: 1.0)
----@field spread_max? number Maximum horizontal spread velocity (default: 1.6)
----@field particles? boolean Enable sparkle/burst particles (default: true)
----@field trails? boolean Enable sparkling trail attached to flying items (default: true)
----@field particle_color? string Hex color for sparkle particles
----@field sound? string Sound identifier to play on drop
----@field killer? ObjectRef Killer object/player if applicable
-
 ---@class LootSubsystem
 local loot = {}
 

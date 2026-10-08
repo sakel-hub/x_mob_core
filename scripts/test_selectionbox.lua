@@ -77,6 +77,8 @@ x_mob_core = {
 	animator = {
 		play = function() end,
 	},
+	fast_pathfinder = dofile("navigation/fast_pathfinder.lua"),
+	mob_memory = dofile("navigation/mob_memory.lua"),
 }
 _G.x_mob_core = x_mob_core
 

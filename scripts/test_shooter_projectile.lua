@@ -48,6 +48,14 @@ _G.vector = {
 	multiply = function(v, s)
 		return {x = v.x * s, y = v.y * s, z = v.z * s}
 	end,
+	normalize = function(v)
+		local len = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+		if len == 0 then return {x = 0, y = 0, z = 0} end
+		return {x = v.x / len, y = v.y / len, z = v.z / len}
+	end,
+	equals = function(a, b)
+		return a and b and a.x == b.x and a.y == b.y and a.z == b.z
+	end,
 	dir_to_rotation = function(_dir)
 		return {x = 0, y = 0, z = 0}
 	end,
@@ -114,6 +122,8 @@ local function mock_object(opts)
 			name = opts.name or "test:mob",
 			factions = facts,
 			_shooter = opts._shooter,
+			_is_health_bar = opts._is_health_bar,
+			_is_envelop = opts._is_envelop,
 		}
 	end
 
@@ -164,9 +174,13 @@ do
 	assert_false(shooter.is_valid_target(proj_ent, mock_object({name = "__builtin:custom_item"})),
 		"rejects entities matching __builtin: prefix")
 
-	-- Utility health bar must be rejected
+	-- Utility health bar and envelop sleeve visual attachments must be rejected
 	assert_false(shooter.is_valid_target(proj_ent, mock_object({name = "x_mob_core:health_bar"})),
 		"rejects x_mob_core:health_bar")
+	assert_false(shooter.is_valid_target(proj_ent, mock_object({name = "x_mob_core:envelop"})),
+		"rejects x_mob_core:envelop")
+	assert_false(shooter.is_valid_target(proj_ent, mock_object({name = "custom:envelop", _is_envelop = true})),
+		"rejects target with _is_envelop flag")
 
 	-- Same projectile type must be rejected
 	assert_false(shooter.is_valid_target(proj_ent, mock_object({name = "x_mobs:archer_arrow"})),
@@ -236,6 +250,7 @@ do
 	assert_true(target_player.was_punched(), "player received punch damage")
 	local punch = target_player.get_punch_params()
 	assert_eq(punch.caps.damage_groups.fleshy, 7, "punch damage matches projectile damage")
+	assert_eq(punch.dir.x, 1, "punch direction follows forward flight velocity (+X)")
 	assert_false(dropped_item.was_punched(), "dropped item was not punched")
 	assert_true(proj_obj.was_removed(), "projectile removed upon impact")
 end
@@ -337,6 +352,64 @@ do
 	assert_true(shooter.is_valid_target(proj_ent, bullet2_target), "accepts target entity without projectile flags")
 	bullet2_target.get_luaentity()._is_bullet = true
 	assert_false(shooter.is_valid_target(proj_ent, bullet2_target), "rejects target with _is_bullet flag")
+end
+
+-- 5. Test step_projectile deflection integration with x_player_armor
+do
+	local shooter_mob = mock_object({name = "x_mobs:spectrum", factions = {"dark"}})
+	local proj_obj = mock_object({
+		name = "x_mobs:spectrum_orb",
+		pos = {x = 0, y = 1, z = 2},
+		vel = {x = 0, y = 0, z = -14},
+		_shooter = shooter_mob,
+	})
+	local proj_ent = {
+		name = "x_mobs:spectrum_orb",
+		object = proj_obj,
+		_shooter = shooter_mob,
+		_damage = 6,
+		_old_pos = {x = 0, y = 1, z = 4},
+		timer = 0,
+	}
+
+	local defending_player = mock_object({is_player = true, pos = {x = 0, y = 1, z = 0}})
+	_G.core.raycast = function()
+		local hit_done = false
+		return function()
+			if not hit_done then
+				hit_done = true
+				return { type = "object", ref = defending_player, intersection_point = {x = 0, y = 1, z = 0.5} }
+			end
+			return nil
+		end
+	end
+
+	local deflected_call_args = nil
+	_G.x_player_armor = {
+		try_deflect_projectile = function(player, obj, hit_pos, flight_dir, proj_data)
+			deflected_call_args = {
+				player = player,
+				obj = obj,
+				hit_pos = hit_pos,
+				flight_dir = flight_dir,
+				proj_data = proj_data,
+			}
+			return true
+		end,
+	}
+
+	local hit, hit_obj, hit_pos = shooter.step_projectile(proj_ent, 0.1, { damage = 6, lifetime = 5.0 })
+	assert_true(hit, "deflected projectile returns hit = true")
+	assert_eq(hit_obj, defending_player, "hit object is defending player")
+	assert_eq(hit_pos.z, 0.5, "hit position is impact point")
+	assert_true(proj_ent._deflected, "projectile entity marked as _deflected")
+	assert_eq(proj_ent._shooter, defending_player, "projectile ownership assigned to defending player")
+	assert_false(proj_obj.was_removed(), "deflected projectile is NOT removed so it can bounce")
+	assert_true(deflected_call_args ~= nil, "try_deflect_projectile was called")
+	assert_eq(deflected_call_args.flight_dir.z, -1, "flight_dir correctly reflects -Z flight trajectory")
+
+	-- Clean up global mock
+	_G.x_player_armor = nil
 end
 
 print("==================================================")

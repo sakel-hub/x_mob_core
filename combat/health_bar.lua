@@ -8,6 +8,9 @@
 ---@class HealthBarSubsystem
 local health_bar = {}
 
+local modpath = core.get_modpath("x_mob_core")
+local utils = dofile(modpath .. "/core/utils.lua")
+
 ---@type table<string, string> Cache of generated [combine: texture modifier strings
 local texture_cache = {}
 
@@ -83,10 +86,7 @@ function health_bar.get_config(def)
 		return { enabled = false }
 	end
 
-	local cfg = {}
-	for k, v in pairs(DEFAULT_CONFIG) do
-		cfg[k] = v
-	end
+	local cfg = utils.shallow_copy(DEFAULT_CONFIG)
 
 	-- Apply global setting defaults
 	if not global_enabled then

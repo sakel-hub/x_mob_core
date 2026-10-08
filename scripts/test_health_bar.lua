@@ -38,6 +38,8 @@ local core = {
 	},
 	get_modpath = function(modname)
 		if modname == "x_mob_core" then
+			local f = io.open("mods/x_mob_core/api.lua", "r")
+			if f then f:close() return "mods/x_mob_core" end
 			return "."
 		end
 		return nil
@@ -127,7 +129,8 @@ _G.core = core
 _G.minetest = core
 
 -- Load health bar subsystem under test
-local health_bar = dofile("combat/health_bar.lua")
+local modpath = core.get_modpath("x_mob_core")
+local health_bar = dofile(modpath .. "/combat/health_bar.lua")
 
 -- Test Runner Assertions
 local total_tests = 0

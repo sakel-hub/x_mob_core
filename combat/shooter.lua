@@ -88,6 +88,10 @@ function shooter.is_valid_target(source_or_proj, obj, options)
 	end
 
 	-- Entity handling
+	if obj.get_attach and obj:get_attach() ~= nil then
+		return false
+	end
+
 	local ent = obj:get_luaentity()
 	if not ent then return false end
 
@@ -97,8 +101,11 @@ function shooter.is_valid_target(source_or_proj, obj, options)
 		return false
 	end
 
-	-- Ignore utility health bars
-	if name == "x_mob_core:health_bar" or ent._is_health_bar then
+	-- Ignore utility visual attachments (health bars, envelop sleeves, wield items, visual proxies)
+	if name == "x_mob_core:health_bar" or ent._is_health_bar
+			or name == "x_mob_core:envelop" or ent._is_envelop
+			or ent._is_wielditem or ent._is_visual_proxy
+			or name:find("wield") or name:find("^x_player_api:visual") then
 		return false
 	end
 
@@ -235,21 +242,36 @@ function shooter.step_projectile(self, dtime, options)
 		local shooter_ref = (self._shooter and self._shooter:is_valid()) and self._shooter or obj
 
 		if hit_obj and hit_obj:is_valid() then
-			if opts.on_hit_object then
+			-- Calculate accurate incoming projectile flight direction from velocity or trajectory vector
+			local vel = obj:get_velocity()
+			local flight_dir
+			if vel and (vel.x ~= 0 or vel.y ~= 0 or vel.z ~= 0) then
+				flight_dir = vector.normalize(vel)
+			elseif old_pos and hit_pos and not vector.equals(old_pos, hit_pos) then
+				flight_dir = vector.direction(old_pos, hit_pos)
+			else
 				local opos = hit_obj:get_pos()
-				local dir = opos and vector.direction(pos, opos) or {x = 0, y = 1, z = 0}
-				opts.on_hit_object(self, hit_obj, hit_pos, dir)
+				flight_dir = (opos and vector.direction(old_pos or pos, opos)) or {x = 0, y = 0, z = -1}
+			end
+
+			local xpa = rawget(_G, "x_player_armor")
+			if hit_obj:is_player() and xpa then
+				local deflected = xpa.try_deflect_projectile(hit_obj, obj, hit_pos, flight_dir, self)
+				if deflected then
+					self._deflected = true
+					self._shooter = hit_obj
+					return true, hit_obj, hit_pos
+				end
+			end
+
+			if opts.on_hit_object then
+				opts.on_hit_object(self, hit_obj, hit_pos, flight_dir)
 			else
 				local dmg = self._damage or opts.damage or 5
-				local opos = hit_obj:get_pos()
-				local dir = opos and vector.direction(pos, opos) or {x = 0, y = 1, z = 0}
-				if dir.x == 0 and dir.y == 0 and dir.z == 0 then
-					dir = {x = 0, y = 1, z = 0}
-				end
 				hit_obj:punch(shooter_ref, 1.0, {
 					full_punch_interval = 1.0,
 					damage_groups = {fleshy = dmg},
-				}, dir)
+				}, flight_dir)
 			end
 		else
 			local n_pos = {
@@ -284,7 +306,7 @@ end
 
 --- Universal ranged combat handler for shooter mobs
 ---@param self table Mob entity instance
----@param _dtime number Step delta time
+---@param dtime number Step delta time
 ---@param def table Entity definition table
 ---@return boolean handled True if the shooter logic intercepted movement/combat
 function shooter.step(self, dtime, def)
@@ -316,7 +338,13 @@ function shooter.step(self, dtime, def)
 	-- Active retreat if target gets too close (kiting)
 	local is_retreating = false
 	if dist < min_range then
-		is_retreating = x_mob_core.retreat_from(self, tpos, cfg.retreat_speed or 1.0)
+		if cfg.kiting ~= false and (cfg.retreat_speed or 1.0) > 0 then
+			is_retreating = x_mob_core.retreat_from(self, tpos, cfg.retreat_speed or 1.0)
+		else
+			-- Hybrid warrior-shooter: do not kite when closer than min_range;
+			-- yield to standard locomotion AI to close into melee reach
+			return false
+		end
 	end
 
 	-- Handle mobile shooting animation timer
@@ -327,7 +355,7 @@ function shooter.step(self, dtime, def)
 		end
 		if self._shoot_anim_timer <= 0 then
 			self._shoot_anim_timer = nil
-			if self.state == "attacking" then
+			if self.state == "attacking" or self.state == "shooting" then
 				if is_retreating then
 					self.state = "retreating"
 					animator.play(self.object, "walk", {speed = 1.2, loop = true})
@@ -342,20 +370,23 @@ function shooter.step(self, dtime, def)
 	-- Ready to fire!
 	if (self.attack_cooldown or 0) <= 0 then
 		local can_shoot_while_retreating = (cfg.shoot_while_retreating ~= false) and is_retreating
+		local shoot_state = cfg.state or "attacking"
 
 		if not can_shoot_while_retreating then
 			-- Stop horizontal movement to fire cleanly when stationary
 			x_mob_core.halt_horizontal_velocity(self)
 
-			self.state = "attacking"
+			self.state = shoot_state
 			self.action_timer = cfg.fire_duration or 1.0
 		else
 			-- Shoot on the move while maintaining retreat velocity
-			self.state = "attacking"
+			self.state = shoot_state
 			self._shoot_anim_timer = cfg.fire_duration or 0.8
 		end
 
 		self.attack_cooldown = cfg.cooldown or 2.0
+		self.cooldowns = self.cooldowns or {}
+		self.cooldowns.shoot = self.attack_cooldown
 
 		local anim = cfg.animation or "attack"
 		animator.play(self.object, anim, {speed = 1.0, loop = false, force = true})
@@ -363,13 +394,16 @@ function shooter.step(self, dtime, def)
 		local shoot_sound = cfg.sound or "shoot"
 		sound.play(self, shoot_sound)
 
+		if cfg.on_charge then
+			cfg.on_charge(self, pos)
+		end
+
 		local delay = cfg.fire_delay or 0.4
 		x_mob_core.schedule(self, delay, "shoot_projectile", function()
 			if self.target and utils.is_player_alive(self.target) then
 					local cp = self.object:get_pos()
 					local tp = self.target:get_pos()
 					if cp and tp then
-						local proj = cfg.projectile or "x_mobs:archer_arrow"
 						local origin = {x = cp.x, y = cp.y + (self.eye_offset or 1.5), z = cp.z}
 						local tgt_center = {x = tp.x, y = tp.y + 1.0, z = tp.z}
 						local p_vel = cfg.velocity or 18.0
@@ -382,16 +416,26 @@ function shooter.step(self, dtime, def)
 							dir = vector.direction(origin, tgt_center)
 						end
 
-						local p_obj = core.add_entity(origin, proj)
-						if p_obj and p_obj:is_valid() then
-							p_obj:set_velocity(vector.multiply(dir, p_vel))
-							p_obj:set_rotation(vector.dir_to_rotation(dir))
-							-- Standardize projectile metadata
-							local p_ent = p_obj:get_luaentity()
-							if p_ent then
-								p_ent._shooter = self.object
-								p_ent._damage = cfg.damage or 3
+						if cfg.on_fire then
+							cfg.on_fire(self, origin, dir, p_vel, tgt_center)
+						elseif cfg.projectile ~= false then
+							local proj = cfg.projectile or "x_mobs:archer_arrow"
+							local p_obj = core.add_entity(origin, proj)
+							if p_obj and p_obj:is_valid() then
+								p_obj:set_velocity(vector.multiply(dir, p_vel))
+								p_obj:set_rotation(vector.dir_to_rotation(dir))
+								-- Standardize projectile metadata
+								local p_ent = p_obj:get_luaentity()
+								if p_ent then
+									p_ent._shooter = self.object
+									p_ent._damage = cfg.damage or 3
+								end
+								if cfg.on_shoot then
+									cfg.on_shoot(self, p_obj, dir, origin)
+								end
 							end
+						elseif cfg.on_shoot then
+							cfg.on_shoot(self, nil, dir, origin)
 						end
 					end
 				end
@@ -400,12 +444,15 @@ function shooter.step(self, dtime, def)
 	end
 
 	-- On cooldown: if retreating, play walk animation; if standing ground, play idle
-	if self.state ~= "attacking" then
+	if self.state ~= "attacking" and self.state ~= "shooting" then
 		if is_retreating then
 			if self.state ~= "retreating" then
 				self.state = "retreating"
 				animator.play(self.object, "walk", {speed = 1.2, loop = true})
 			end
+		elseif cfg.advance_on_cooldown == true then
+			-- Yield to locomotion AI to advance toward target while on shoot cooldown
+			return false
 		else
 			-- Not retreating: stand ground and aim
 			x_mob_core.halt_horizontal_velocity(self)

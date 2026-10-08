@@ -56,6 +56,14 @@ function damage.calculate_punch_damage(self, puncher, time_from_last_punch, tool
 		dmg = damage_override
 	end
 
+	-- Apply incoming status effect damage multiplier (e.g. brittle / crystallize)
+	if self.object then
+		local eff_mult = x_mob_core.get_damage_multiplier(self.object)
+		if eff_mult and eff_mult > 0 and eff_mult ~= 1.0 then
+			dmg = dmg * eff_mult
+		end
+	end
+
 	dmg = math.floor(dmg + 0.5)
 	if dmg <= 0 then
 		dmg = 1
