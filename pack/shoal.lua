@@ -693,7 +693,7 @@ end
 ---@param target ObjectRef Target entity
 ---@param dir Vector Strike direction
 ---@param _def table Mob definition table
-function shoal.perform_attack(self, target, dir, _def)
+function shoal.perform_attack(self, target, dir, def)
 	self.state = "attacking"
 	self.action_timer = 0.45
 	self.attack_cooldown = 2.2 + math.random() * 1.5
@@ -740,6 +740,12 @@ function shoal.perform_attack(self, target, dir, _def)
 					full_punch_interval = 1.0,
 					damage_groups = { fleshy = atk_dmg },
 				}, atk_dir)
+
+				if def and def.shoal and def.shoal.on_strike then
+					def.shoal.on_strike(self, target, atk_dir)
+				elseif def and def.on_strike then
+					def.on_strike(self, target, atk_dir)
+				end
 
 				-- Recoil after slash (never pop upward into surface air)
 				local recoil_y = 0.0

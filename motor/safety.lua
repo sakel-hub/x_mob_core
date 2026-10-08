@@ -20,12 +20,12 @@ function safety.is_aquatic_mob(self)
 	if not def then return false end
 	if (def.shoal ~= nil) or (self.shoal ~= nil) or
 		(def.shoal_member == true) or (self.shoal_member == true) or
-		(def.aquatic == true) or (self.aquatic == true) or
 		(def.is_aquatic == true) or (self.is_aquatic == true) or
+		(def.aquatic == true) or (self.aquatic == true) or
 		(def.type == "aquatic") or (self.type == "aquatic") or
 		(def.mob_type == "aquatic") or (self.mob_type == "aquatic") or
-		(def.can_breathe == false and (def.can_fly_in_water == true or def.fly_in_water == true)) or
-		(self.can_breathe == false and (self.can_fly_in_water == true or self.fly_in_water == true)) then
+		(def.can_breathe == false and def.can_fly_in_water == true) or
+		(self.can_breathe == false and self.can_fly_in_water == true) then
 		return true
 	end
 	local facts = self.factions or def.factions
@@ -288,6 +288,26 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 		end
 		if h_def and h_def.damage_per_second and h_def.damage_per_second > 0 then
 			return false, "hazard"
+		end
+
+		-- Check sub-surface nodes underneath the floating entity (hover offset clearance)
+		-- Floating mobs hover above ground or water. If they disallow water or cannot swim,
+		-- inspect downwards to detect water surfaces and hazards under their flight path.
+		for dy = 1, 3 do
+			local sub_node = node_cache.get_node({x = target_x, y = foot_y - dy, z = target_z})
+			local sub_def = core.registered_nodes[sub_node.name]
+			if sub_def then
+				if sub_def.damage_per_second and sub_def.damage_per_second > 0 then
+					return false, "hazard"
+				end
+				if sub_def.liquidtype and sub_def.liquidtype ~= "none" and
+				   (not abilities.can_swim or (abilities and abilities.disallow_water)) then
+					return false, "water"
+				end
+				if sub_def.walkable then
+					break
+				end
+			end
 		end
 
 		return true

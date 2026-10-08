@@ -22,11 +22,12 @@ local TRAIL_SAMPLE_INTERVAL = 1.0
 --- Initializes a zero-allocation working memory buffer on an entity instance
 ---@param self table Entity instance
 function mob_memory.init_memory(self)
-	if self.memory then return self.memory end
+	if self.memory and self.memory.trail then return self.memory end
 
+	local existing = self.memory or {}
 	local mem = {
 		-- Target memory (Single fixed record)
-		target = {
+		target = existing.target or {
 			name = "",
 			lkp = {x = 0, y = 0, z = 0},
 			last_seen = 0.0,
@@ -34,24 +35,24 @@ function mob_memory.init_memory(self)
 		},
 
 		-- Danger memory (Pre-allocated ring buffer)
-		dangers = {},
-		danger_idx = 1,
+		dangers = existing.dangers or {},
+		danger_idx = existing.danger_idx or 1,
 
 		-- Traversal history / trail (Pre-allocated circular buffer)
-		trail = {},
-		trail_idx = 1,
-		last_trail_sample = 0.0,
+		trail = existing.trail or {},
+		trail_idx = existing.trail_idx or 1,
+		last_trail_sample = existing.last_trail_sample or 0.0,
 
 		-- Obstruction / Deadlock memory
-		blocked_spots = {},
-		blocked_idx = 1,
+		blocked_spots = existing.blocked_spots or {},
+		blocked_idx = existing.blocked_idx or 1,
 
 		-- Health regeneration & fleeing state
-		regen_timer = 0.0,
-		flee_state = false,
+		regen_timer = existing.regen_timer or 0.0,
+		flee_state = (existing.flee_state ~= nil) and existing.flee_state or false,
 
 		-- Fight / combat location memory (decoupled from 8s LKP for tactical return)
-		fight = {
+		fight = existing.fight or {
 			x = 0.0,
 			y = 0.0,
 			z = 0.0,
@@ -60,15 +61,15 @@ function mob_memory.init_memory(self)
 		},
 
 		-- Unreachable targets cache (e.g. across impassable water)
-		unreachable_targets = {},
+		unreachable_targets = existing.unreachable_targets or {},
 
 		-- Pre-allocated reusable query vectors (zero GC pressure)
-		vec_danger_repulse = {x = 0.0, y = 0.0, z = 0.0},
-		vec_exploration_bias = {x = 0.0, y = 0.0, z = 0.0},
-		vec_fight_return = {x = 0.0, y = 0.0, z = 0.0},
+		vec_danger_repulse = existing.vec_danger_repulse or {x = 0.0, y = 0.0, z = 0.0},
+		vec_exploration_bias = existing.vec_exploration_bias or {x = 0.0, y = 0.0, z = 0.0},
+		vec_fight_return = existing.vec_fight_return or {x = 0.0, y = 0.0, z = 0.0},
 
 		-- Pre-allocated heading evaluation cache (zero GC across multi-angle candidate scoring)
-		_heading_cache = {
+		_heading_cache = existing._heading_cache or {
 			pos_x = 0.0,
 			pos_y = 0.0,
 			pos_z = 0.0,
@@ -387,11 +388,11 @@ end
 ---@param dtime number Step delta time
 ---@param current_time? number Current timestamp
 function mob_memory.record_trail_step(self, current_pos, dtime, current_time)
-	if not self.memory then mob_memory.init_memory(self) end
+	if not self.memory or not self.memory.trail then mob_memory.init_memory(self) end
 	if not current_pos then return end
 
 	local mem = self.memory
-	mem.last_trail_sample = mem.last_trail_sample + dtime
+	mem.last_trail_sample = (mem.last_trail_sample or 0.0) + dtime
 
 	if mem.last_trail_sample >= TRAIL_SAMPLE_INTERVAL then
 		mem.last_trail_sample = 0.0
@@ -665,16 +666,23 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 	if return_ratio ~= nil then return_thresh = max_hp * return_ratio end
 	if regen_rate ~= nil then rate = regen_rate end
 
-	-- Enter fleeing if HP drops below threshold
+	-- Enter fleeing if HP drops below threshold (1-time limit for tactical disengage, continuous for unlimited_flee)
 	if flee_thresh > 0 and not mem.flee_state and cur_hp <= flee_thresh and cur_hp > 0 then
-		mem.flee_state = true
-		self.state = "fleeing"
+		local can_flee = (not hr or hr.can_flee ~= false) and ((hr and hr.unlimited_flee == true) or not self._flee_used)
+		if can_flee then
+			mem.flee_state = true
+			if self.state ~= "flinching" then
+				self.state = "fleeing"
+			end
+		end
 	end
 
 	-- While fleeing, panicking, or when passive regeneration is enabled, regenerate health
+	-- For tactical disengage (unlimited_flee == false), regeneration occurs upon completing channel
 	local is_running_away = mem.flee_state or (self.state == "fleeing" or self.state == "flee") or
 		(self.panic_timer and self.panic_timer > 0)
-	local should_regen = (rate > 0) and (is_running_away or passive)
+	local is_unlimited = not hr or (hr.unlimited_flee ~= false)
+	local should_regen = (rate > 0) and ((is_unlimited and is_running_away) or passive)
 	if should_regen and cur_hp < max_hp and cur_hp > 0 then
 		mem.regen_timer = mem.regen_timer + dtime
 		if mem.regen_timer >= 1.0 then
@@ -704,12 +712,17 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 		end
 	end
 
+	if cur_hp >= max_hp then
+		self._flee_used = nil
+	end
+
 	if mem.flee_state then
 		-- Once HP recovers above return threshold and mob is not panicking, exit fleeing
 		local is_panicking = (self.panic_timer and self.panic_timer > 0)
 		if cur_hp >= return_thresh and not is_panicking then
 			mem.flee_state = false
-			if self.state == "fleeing" then
+			self._flee_standoff = nil
+			if self.state == "fleeing" or self.state == "channeling" then
 				self.state = "idle"
 			end
 			-- Clear old danger memories so mob doesn't keep running away
@@ -730,7 +743,10 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 	return mem.flee_state
 end
 
---- Broadcasts a swarm alert to nearby allies of the same species
+--- Broadcasts a swarm alert to nearby allies of the same species.
+--- Injects danger threat records and `"swarm_alert"` coordinate memory into idle allies,
+--- prompting them to navigate to and investigate the disturbance location even without direct line of sight.
+--- Invoked automatically alongside `coordination.broadcast_threat` when `def.swarm_alert` is configured.
 --- Configurable via self.swarm_alert = {enabled = true, radius = 10.0, max_allies = 3}
 ---@param self table Entity instance sending the alert
 ---@param alert_pos Vector Position of the threat

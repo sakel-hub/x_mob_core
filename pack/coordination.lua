@@ -28,7 +28,11 @@ function coordination.rally_followers(leader_self, target)
 	end
 end
 
---- Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy
+--- Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy.
+--- Directly assigns `ent.target = target` and transitions idle/roaming allies into `"combat"`.
+--- Note: This is an imperative function requiring an active `ObjectRef`. Unlike declarative
+--- `swarm_alert`, it does not write coordinate memory for obscured allies, nor does it
+--- trigger automatically on death.
 ---@param self table Mob instance
 ---@param target ObjectRef Threat target
 ---@param radius? number Alert radius in nodes (default: 16.0)
@@ -59,6 +63,9 @@ function coordination.broadcast_threat(self, target, radius, max_allies)
 						ent.target = target
 						if ent.state == "idle" or ent.state == "walk" or ent.state == "regrouping" then
 							ent.state = "combat"
+						end
+						if ent.path_state then
+							ent.path_state.timer = 99.0
 						end
 						alerted = alerted + 1
 					end
@@ -168,7 +175,7 @@ function coordination.step_regroup(self, dtime, move_anim, speed_mult)
 		local to_leader = vector.direction(my_pos, l_pos)
 		local motor = x_mob_core.motor
 		local fast_pathfinder = x_mob_core.fast_pathfinder
-		local is_aquatic = (self.shoal ~= nil) or (self.aquatic == true) or (self.is_aquatic == true) or
+		local is_aquatic = (self.shoal ~= nil) or (self.is_aquatic == true) or
 			(self.type == "aquatic") or (self.factions and (self.factions.aquatic or self.factions.fish))
 		local leader_in_water = false
 		local ln = core.get_node_or_nil(l_pos)

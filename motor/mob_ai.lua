@@ -16,8 +16,8 @@ local doors = dofile(modpath .. "/motor/doors.lua")
 local surface = dofile(modpath .. "/motor/surface.lua")
 local safety = dofile(modpath .. "/motor/safety.lua")
 local locomotion = dofile(modpath .. "/motor/locomotion.lua")
-local fast_pathfinder = dofile(modpath .. "/navigation/fast_pathfinder.lua")
-local mob_memory = dofile(modpath .. "/navigation/mob_memory.lua")
+local fast_pathfinder = x_mob_core.fast_pathfinder
+local mob_memory = x_mob_core.mob_memory
 
 ---@class MobAISubsystem
 local mob_ai = {}
@@ -67,6 +67,23 @@ local function get_lod_refresh_interval(dist)
 	else
 		return nil -- Long range: pause A*, switch to local wandering
 	end
+end
+
+--- Calculates target vertical velocity for floating mobs during combat pursuit
+--- Anchors hovering elevation slightly above ground or target footing
+---@param self table Mob entity instance
+---@param current_pos Vector Current mob world position
+---@param target_pos Vector Target world position
+---@return number y_vel Vertical velocity
+local function calculate_floating_combat_elevation(self, current_pos, target_pos)
+	local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+	local ground_y = utils.get_ground_y(current_pos, 8, 3, true)
+	local desired_y = ground_y and (ground_y + combat_hover) or (target_pos.y + combat_hover)
+	local h_dy = desired_y - current_pos.y
+	if math.abs(h_dy) < 0.04 then
+		return 0
+	end
+	return math.min(math.max(h_dy * 2.5, -5.0), 4.5)
 end
 
 --- Updates entity navigation, scanning, line-of-sight, and path execution
@@ -215,14 +232,15 @@ function mob_ai.update_navigation(self, dtime)
 			self._knockback_timer = nil
 		else
 			local cur_vel = self.object:get_velocity() or airborne_vel_scratch
+			local cur_vy = (cur_vel and cur_vel.y) or 0
 			local is_kb = (self._knockback_timer and self._knockback_timer > 0)
-			if is_kb or math.abs(cur_vel.y) > 0.6 then
+			if is_kb or math.abs(cur_vy) > 0.6 then
 				safe_set_acceleration(self.object, airborne_accel_scratch)
 				local drag = math.max(0.0, 1.0 - 1.2 * dtime)
-				local new_vx = cur_vel.x * drag
-				local new_vz = cur_vel.z * drag
+				local new_vx = (cur_vel.x or 0) * drag
+				local new_vz = (cur_vel.z or 0) * drag
 				airborne_vel_scratch.x = new_vx
-				airborne_vel_scratch.y = cur_vel.y
+				airborne_vel_scratch.y = cur_vy
 				airborne_vel_scratch.z = new_vz
 				self.object:set_velocity(airborne_vel_scratch)
 
@@ -319,8 +337,9 @@ function mob_ai.update_navigation(self, dtime)
 				if self.path_state then
 					self.path_state.waypoints = nil
 					self.path_state.index = 1
-					self.path_state.timer = 999.0
-					self.path_state.retry_delay = 0
+					if not self.path_state.retry_delay or self.path_state.retry_delay <= 0 then
+						self.path_state.timer = 999.0
+					end
 				end
 				self._stuck_timer = 0.0
 			end
@@ -417,6 +436,24 @@ function mob_ai.update_navigation(self, dtime)
 
 	if has_los and corridor_clear and has_ground_los and not on_wall_or_ceiling and (self.is_floating or dy <= 3.5) then
 		local steer_dest = (dist > 4.5) and nav_target_pos or target_pos
+		local attack_rng = self.attack_range or 2.0
+		local standoff_dist = self.combat_standoff or math.max(1.3, attack_rng * 0.7)
+		local h_dx = current_pos.x - target_pos.x
+		local h_dz = current_pos.z - target_pos.z
+		local h_dist = math.sqrt(h_dx * h_dx + h_dz * h_dz)
+
+		if self.is_floating and dist <= 4.5 then
+			if h_dist > 0.05 then
+				local h_dir_x = h_dx / h_dist
+				local h_dir_z = h_dz / h_dist
+				steer_dest = {
+					x = target_pos.x + h_dir_x * standoff_dist,
+					y = target_pos.y,
+					z = target_pos.z + h_dir_z * standoff_dist,
+				}
+			end
+		end
+
 		local move_vec = vector.direction(current_pos, steer_dest)
 
 		check_and_open_forward_doors(current_pos, move_vec, self.abilities, self.object)
@@ -427,9 +464,27 @@ function mob_ai.update_navigation(self, dtime)
 			self.path_state.index = 1
 
 			local speed = self.pursuit_speed or 4.0
-			local attack_rng = self.attack_range or 2.0
 			local in_melee_contact = (dist <= attack_rng * 0.75)
-			if in_melee_contact then
+
+			if self.is_floating then
+				in_melee_contact = (h_dist <= attack_rng * 0.85)
+				if dist <= 4.5 then
+					local gap = h_dist - standoff_dist
+					if gap > 0.08 then
+						speed = math.min(speed, math.max(0.0, gap * 2.5))
+					elseif gap < -0.25 and h_dist > 0.05 then
+						-- Player stepped into mob's personal space; back up to maintain standoff
+						local h_dir_x = h_dx / h_dist
+						local h_dir_z = h_dz / h_dist
+						move_vec = {x = h_dir_x, y = 0, z = h_dir_z}
+						speed = math.min(1.8, (-gap) * 2.0)
+					else
+						-- Holding ideal standoff line
+						speed = 0.0
+						move_vec = {x = 0, y = 0, z = 0}
+					end
+				end
+			elseif in_melee_contact then
 				speed = math.max(0.0, (dist - 1.1) * 2.5)
 			end
 			local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
@@ -460,9 +515,7 @@ function mob_ai.update_navigation(self, dtime)
 				speed = speed * 0.75
 			elseif self.is_floating then
 				safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-				local desired_y = target_pos.y + (self.hover_offset or 0.6)
-				local h_dy = desired_y - current_pos.y
-				y_vel = math.min(math.max(h_dy * 2.5, -5.0), 4.5)
+				y_vel = calculate_floating_combat_elevation(self, current_pos, target_pos)
 			else
 				safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
 				if self._was_in_ladder then
@@ -486,13 +539,13 @@ function mob_ai.update_navigation(self, dtime)
 				z = move_vec.z * speed + sep_z,
 			})
 
-			local face_vec = in_melee_contact and vector.direction(current_pos, target_pos) or move_vec
+			local face_vec = (self.is_floating or in_melee_contact) and vector.direction(current_pos, target_pos) or move_vec
 			if math.abs(face_vec.x) > 0.01 or math.abs(face_vec.z) > 0.01 then
 				local target_yaw = core.dir_to_yaw(face_vec)
 				local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
 				local target_rot = {x = 0, y = target_yaw, z = 0}
-				local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-				local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+				local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+				local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 				self._cur_rot = smoothed_rot
 				safe_set_rotation(self.object, smoothed_rot)
 			end
@@ -532,10 +585,8 @@ function mob_ai.update_navigation(self, dtime)
 					self._unreachable_fails = 0
 				else
 					self.path_state.waypoints = nil
-					self.path_state.retry_delay = 0.8
-					if not has_ground_los then
-						self._unreachable_fails = (self._unreachable_fails or 0) + 1
-					end
+					self.path_state.retry_delay = 1.0 + (self._unreachable_fails or 0) * 0.5
+					self._unreachable_fails = (self._unreachable_fails or 0) + 1
 				end
 			end, self.mob_height)
 		end
@@ -565,62 +616,70 @@ function mob_ai.update_navigation(self, dtime)
 				is_water_blocking = true
 			end
 		end
+		local is_unreachable = (self._unreachable_fails or 0) >= 2
 		local water_blocked = not has_ground_los and is_water_blocking and
 			not self.is_floating and not (self.abilities and self.abilities.can_swim)
 		if water_blocked then
 			self._water_blocked_timer = (self._water_blocked_timer or 0) + dtime
-			if (self._water_blocked_timer >= 2.0) or ((self._unreachable_fails or 0) >= 2) then
-				if self.target then
-					mob_memory.record_unreachable_target(self, self.target, 12.0)
-					mob_memory.record_blocked_spot(self, current_pos, 10.0)
-				end
-				self.target = nil
-				self.state = "wandering"
-				self._water_blocked_timer = 0
-				self._unreachable_fails = 0
-				if self.path_state then
-					self.path_state.waypoints = nil
-					self.path_state.index = 1
-				end
-
-				local away_x = current_pos.x - target_pos.x
-				local away_z = current_pos.z - target_pos.z
-				local away_dist = math.sqrt(away_x * away_x + away_z * away_z)
-				local away_dir
-				if away_dist > 0.01 then
-					away_dir = {x = away_x / away_dist, y = 0, z = away_z / away_dist}
-				else
-					away_dir = {x = 1, y = 0, z = 0}
-				end
-				local away_yaw = core.dir_to_yaw(away_dir)
-				safe_set_yaw(self.object, away_yaw)
-				self._cur_rot = {x = 0, y = away_yaw, z = 0}
-				safe_set_rotation(self.object, self._cur_rot)
-
-				self.wander_state = {
-					is_moving = true,
-					timer = 4.0 + math.random() * 3.0,
-					dir = away_dir,
-					yaw = away_yaw,
-					origin = {x = current_pos.x, y = current_pos.y, z = current_pos.z},
-				}
-				local w_speed = self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
-				local cur_vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
-				self.object:set_velocity({
-					x = away_dir.x * w_speed,
-					y = cur_vel.y,
-					z = away_dir.z * w_speed,
-				})
-				x_mob_core.play_animation(self.object, "walk", {speed = 1.0, loop = true})
-				return {moving = true, speed = w_speed, has_los = false}
-			end
 		else
 			self._water_blocked_timer = 0
 		end
 
-		local lkp = (not has_los and not on_wall_or_ceiling and mob_memory.get_lkp_target) and
+		if (water_blocked and (self._water_blocked_timer >= 2.0 or is_unreachable)) or is_unreachable then
+			if self.target then
+				mob_memory.record_unreachable_target(self, self.target, 10.0)
+				mob_memory.record_blocked_spot(self, current_pos, 8.0)
+			end
+			self.target = nil
+			self.state = "wandering"
+			self._water_blocked_timer = 0
+			self._unreachable_fails = 0
+			if self.path_state then
+				self.path_state.waypoints = nil
+				self.path_state.index = 1
+				self.path_state.retry_delay = 0
+			end
+			self._contour_timer = nil
+			self._contour_dir = nil
+
+			local away_x = current_pos.x - target_pos.x
+			local away_z = current_pos.z - target_pos.z
+			local away_dist = math.sqrt(away_x * away_x + away_z * away_z)
+			local away_dir
+			if away_dist > 0.01 then
+				away_dir = {x = away_x / away_dist, y = 0, z = away_z / away_dist}
+			else
+				away_dir = {x = 1, y = 0, z = 0}
+			end
+			local away_yaw = core.dir_to_yaw(away_dir)
+			safe_set_yaw(self.object, away_yaw)
+			self._cur_rot = {x = 0, y = away_yaw, z = 0}
+			safe_set_rotation(self.object, self._cur_rot)
+
+			self.wander_state = {
+				is_moving = true,
+				timer = 3.5 + math.random() * 2.5,
+				dir = away_dir,
+				yaw = away_yaw,
+				origin = {x = current_pos.x, y = current_pos.y, z = current_pos.z},
+			}
+			local w_speed = self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
+			local cur_vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
+			self.object:set_velocity({
+				x = away_dir.x * w_speed,
+				y = cur_vel.y,
+				z = away_dir.z * w_speed,
+			})
+			x_mob_core.animator.play(self.object, "walk", {speed = 1.0, loop = true})
+			return {moving = true, speed = w_speed, has_los = false}
+		end
+
+		local lkp = (not has_los and not on_wall_or_ceiling) and
 			mob_memory.get_lkp_target(self, 8.0) or nil
 		if self.path_state.is_calculating or has_los or lkp or on_wall_or_ceiling then
+			local h_dx = current_pos.x - target_pos.x
+			local h_dz = current_pos.z - target_pos.z
+			local h_dist = math.sqrt(h_dx * h_dx + h_dz * h_dz)
 			local pursuit_dest = target_pos
 			if not has_los and not on_wall_or_ceiling and lkp then
 				pursuit_dest = lkp
@@ -628,11 +687,21 @@ function mob_ai.update_navigation(self, dtime)
 				if lkp_dist <= 1.5 then
 					mob_memory.clear_target_memory(self)
 				end
+			elseif self.is_floating and dist <= 4.5 and h_dist > 0.05 then
+				local attack_rng = self.attack_range or 2.0
+				local standoff_dist = self.combat_standoff or math.max(1.3, attack_rng * 0.7)
+				local h_dir_x = h_dx / h_dist
+				local h_dir_z = h_dz / h_dist
+				pursuit_dest = {
+					x = target_pos.x + h_dir_x * standoff_dist,
+					y = target_pos.y,
+					z = target_pos.z + h_dir_z * standoff_dist,
+				}
 			end
 			local move_vec = vector.direction(current_pos, pursuit_dest)
 			local speed = (self.pursuit_speed or 4.0) * 0.75
 			local target_above = (target_pos.y - current_pos.y) > 2.5
-			local flat_dist = math.sqrt((target_pos.x - current_pos.x)^2 + (target_pos.z - current_pos.z)^2)
+			local flat_dist = h_dist
 
 			if not on_wall_or_ceiling and not self.is_floating and target_above then
 				if is_crawler then
@@ -651,11 +720,12 @@ function mob_ai.update_navigation(self, dtime)
 							}
 						end
 					else
-						local flank_angles = {0.0, 1.1, -1.1, 2.8}
-						local f_angle = flank_angles[self._flank_slot] or 0.0
-						local p_yaw = safe_get_yaw(self.target) or 0
-						local angle = p_yaw + f_angle
-						move_vec = {x = -math.sin(angle), y = 0, z = math.cos(angle)}
+						local f_dist = flat_dist > 0.01 and flat_dist or 1
+						move_vec = {
+							x = (target_pos.x - current_pos.x) / f_dist,
+							y = 0,
+							z = (target_pos.z - current_pos.z) / f_dist,
+						}
 					end
 				else
 					local standoff_dist = self._flank_dist or 3.2
@@ -677,11 +747,7 @@ function mob_ai.update_navigation(self, dtime)
 								z = (current_pos.z - target_pos.z) / flat_dist,
 							}
 						else
-							local flank_angles = {0.0, 1.1, -1.1, 2.8}
-							local f_angle = flank_angles[self._flank_slot] or 0.0
-							local p_yaw = safe_get_yaw(self.target) or 0
-							local angle = p_yaw + f_angle
-							move_vec = {x = -math.sin(angle), y = 0, z = math.cos(angle)}
+							move_vec = {x = 0, y = 0, z = 0}
 						end
 					else
 						speed = 0.0
@@ -734,8 +800,8 @@ function mob_ai.update_navigation(self, dtime)
 
 					local up_rot = dir_to_surface_rotation({x = 0, y = 1, z = 0}, wn)
 					local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
-					local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-					local smoothed_rot = interpolate_rotation(cur_rot, up_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+					local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+					local smoothed_rot = interpolate_rotation(cur_rot, up_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 					self._cur_rot = smoothed_rot
 					safe_set_rotation(self.object, smoothed_rot)
 					return {moving = true, speed = speed, has_los = has_los}
@@ -763,9 +829,8 @@ function mob_ai.update_navigation(self, dtime)
 				local h_blocked = h_def and h_def.walkable and not h_openable
 				if c_blocked or h_blocked then
 					facing_wall = true
-					if self.path_state then
+					if self.path_state and (not self.path_state.retry_delay or self.path_state.retry_delay <= 0) then
 						self.path_state.timer = 999.0
-						self.path_state.retry_delay = 0
 					end
 				end
 			end
@@ -799,16 +864,14 @@ function mob_ai.update_navigation(self, dtime)
 					local move_dir = {x = tan_x, y = tan_y, z = tan_z}
 					local target_rot = dir_to_surface_rotation(move_dir, surf_norm)
 					local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
-					local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-					local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+					local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+					local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 					self._cur_rot = smoothed_rot
 					safe_set_rotation(self.object, smoothed_rot)
 				end
 			elseif self.is_floating then
 				safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-				local desired_y = target_pos.y + (self.hover_offset or 0.6)
-				local h_dy = desired_y - current_pos.y
-				local y_vel = math.min(math.max(h_dy * 2.5, -5.0), 4.5)
+				local y_vel = calculate_floating_combat_elevation(self, current_pos, target_pos)
 				self.object:set_velocity({
 					x = move_vec.x * speed + sep.x,
 					y = y_vel,
@@ -830,12 +893,14 @@ function mob_ai.update_navigation(self, dtime)
 
 				if speed <= 0.01 then
 					self.object:set_velocity({x = sep.x, y = y_vel, z = sep.z})
-					if math.abs(move_vec.x) > 0.01 or math.abs(move_vec.z) > 0.01 then
-						local target_yaw = core.dir_to_yaw(move_vec)
+					local face_dir = (has_los) and
+						{x = target_pos.x - current_pos.x, y = 0, z = target_pos.z - current_pos.z} or move_vec
+					if math.abs(face_dir.x) > 0.01 or math.abs(face_dir.z) > 0.01 then
+						local target_yaw = core.dir_to_yaw(face_dir)
 						local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
 						local target_rot = {x = 0, y = target_yaw, z = 0}
-						local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-						local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+						local max_rot_step = (math.min(self.max_angular_speed or 4.0, 3.0)) * dtime
+						local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 5.0), max_rot_step)
 						self._cur_rot = smoothed_rot
 						safe_set_rotation(self.object, smoothed_rot)
 					end
@@ -862,10 +927,27 @@ function mob_ai.update_navigation(self, dtime)
 						y = y_vel,
 						z = move_vec.z * speed + sep.z,
 					})
+				elseif (self._unreachable_fails or 0) > 0 then
+					-- Pathfinder already reported no path:
+					-- Hold position and calmly face target instead of spinning sideways/backwards
+					self._contour_timer = nil
+					self._contour_dir = nil
+					self.object:set_velocity({x = sep.x, y = y_vel, z = sep.z})
+					local to_target = (has_los) and
+						{x = target_pos.x - current_pos.x, y = 0, z = target_pos.z - current_pos.z} or move_vec
+					if math.abs(to_target.x) > 0.01 or math.abs(to_target.z) > 0.01 then
+						local target_yaw = core.dir_to_yaw(to_target)
+						local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
+						local target_rot = {x = 0, y = target_yaw, z = 0}
+						local max_rot_step = math.min(self.max_angular_speed or 4.0, 3.0) * dtime
+						local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 5.0), max_rot_step)
+						self._cur_rot = smoothed_rot
+						safe_set_rotation(self.object, smoothed_rot)
+					end
+					return {moving = false, speed = 0, has_los = has_los}
 				else
-					if self.path_state then
+					if self.path_state and (not self.path_state.retry_delay or self.path_state.retry_delay <= 0) then
 						self.path_state.timer = 999.0
-						self.path_state.retry_delay = 0
 					end
 
 					local cand_dirs
@@ -929,12 +1011,28 @@ function mob_ai.update_navigation(self, dtime)
 			end
 
 			if not on_wall_or_ceiling then
-				if math.abs(move_vec.x) > 0.01 or math.abs(move_vec.z) > 0.01 then
-					local target_yaw = core.dir_to_yaw(move_vec)
+				local face_dir = move_vec
+				local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
+				local horiz_speed_sq = vel.x * vel.x + vel.z * vel.z
+				-- When stationary or backing up, maintain gaze on the target
+				if has_los and (horiz_speed_sq < 0.04 or speed <= 0.01) then
+					local to_target = {x = target_pos.x - current_pos.x, y = 0, z = target_pos.z - current_pos.z}
+					if math.abs(to_target.x) > 0.01 or math.abs(to_target.z) > 0.01 then
+						face_dir = to_target
+					end
+				end
+
+				if math.abs(face_dir.x) > 0.01 or math.abs(face_dir.z) > 0.01 then
+					local target_yaw = core.dir_to_yaw(face_dir)
 					local cur_rot = self._cur_rot or {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
 					local target_rot = {x = 0, y = target_yaw, z = 0}
-					local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-					local smoothed_rot = interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+					local max_angular = self.max_angular_speed or 4.0
+					if horiz_speed_sq < 0.04 or speed <= 0.01 or (self._unreachable_fails or 0) > 0 then
+						max_angular = math.min(max_angular, 3.0)
+					end
+					local max_rot_step = max_angular * dtime
+					local lerp_factor = math.min(1.0, dtime * ((horiz_speed_sq < 0.04) and 5.0 or 6.5))
+					local smoothed_rot = interpolate_rotation(cur_rot, target_rot, lerp_factor, max_rot_step)
 					self._cur_rot = smoothed_rot
 					safe_set_rotation(self.object, smoothed_rot)
 				end
@@ -955,7 +1053,7 @@ function mob_ai.update_navigation(self, dtime)
 		elseif not self.is_floating and not on_wall_or_ceiling then
 			local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 			safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
-			self.object:set_velocity({x = 0, y = vel.y, z = 0})
+			self.object:set_velocity({x = 0, y = vel.y or 0, z = 0})
 		else
 			safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			self.object:set_velocity({x = 0, y = 0, z = 0})
@@ -969,7 +1067,7 @@ local cached_entity_wrapper
 --- Entity Registration Helper
 --- Wraps standard mob definition with optimized pathfinding motor controller
 ---@param name string Entity technical name (e.g. "x_mobs:smart_zombie")
----@param def table Entity definition table
+---@param def MobRegistrationDef Entity definition table
 function mob_ai.register_pathfinding_mob(name, def)
 	if not cached_entity_wrapper then
 		cached_entity_wrapper = dofile(modpath .. "/lifecycle/entity_wrapper.lua")
@@ -989,7 +1087,7 @@ function mob_ai.scan_for_player(self, scan_radius, eye_height)
 
 	local eye_pos = {x = pos.x, y = pos.y + (eye_height or self.eye_offset or 1.5), z = pos.z}
 	local max_dist = scan_radius or self.aggro_radius or 16.0
-	local nearest_dist = max_dist
+	local nearest_dist = math.huge
 	local nearest_player = nil
 
 	local players = core.get_connected_players()
@@ -1001,7 +1099,11 @@ function mob_ai.scan_for_player(self, scan_radius, eye_height)
 				local ppos = p:get_pos()
 				if ppos then
 					local dist = vector.distance(pos, ppos)
-					if dist < nearest_dist then
+					local effective_max = max_dist
+					if x_mob_core.has_status_effect(p, "pheromone_mark") then
+						effective_max = max_dist * 2.5
+					end
+					if dist <= effective_max and dist < nearest_dist then
 						local player_eye = {x = ppos.x, y = ppos.y + 1.5, z = ppos.z}
 						if check_line_of_sight(eye_pos, player_eye) then
 							nearest_dist = dist

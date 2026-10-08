@@ -373,6 +373,12 @@ function swarm.perform_attack(self, target, dir, def)
 					damage_groups = { fleshy = atk_dmg },
 				}, attack_dir)
 
+				if swarm_cfg.on_strike then
+					swarm_cfg.on_strike(self, target, attack_dir)
+				elseif def.on_strike then
+					def.on_strike(self, target, attack_dir)
+				end
+
 				local rdx = cp.x - tp.x
 				local rdz = cp.z - tp.z
 				local rdist = math.sqrt(rdx * rdx + rdz * rdz)
@@ -504,6 +510,9 @@ function swarm.step_combat(self, dtime, def)
 		self._cur_rot = {x = 0, y = dive_yaw, z = 0}
 
 		local dive_speed = (c_cfg.dive_speed or 6.4) + (self._speed_variance or 0)
+		if x_mob_core.has_status_effect(self.target, "pheromone_mark") then
+			dive_speed = dive_speed * 1.3
+		end
 		self.object:set_velocity({
 			x = dive_dir.x * dive_speed,
 			y = dive_dir.y * dive_speed,

@@ -359,9 +359,9 @@ function squad.spawn_cluster(self, def)
 	local radius_h = math.max(math.abs(cbox[1]), math.abs(cbox[4]), math.abs(cbox[3]), math.abs(cbox[6]))
 	local diameter_h = radius_h * 2
 
-	local is_aquatic = (def.shoal ~= nil) or def.aquatic or def.is_aquatic or (def.type == "aquatic")
+	local is_aquatic = (def.is_aquatic == true) or (def.shoal ~= nil) or (def.type == "aquatic")
 	local is_airborne = not is_aquatic and (
-		(def.swarm ~= nil and def.is_floating) or def.is_floating or def.fly or (def.type == "flying")
+		(def.swarm ~= nil and def.is_floating) or def.is_floating or (def.type == "flying")
 	)
 
 	local min_y, max_y

@@ -14,6 +14,9 @@ local doors = dofile(modpath .. "/motor/doors.lua")
 local surface = dofile(modpath .. "/motor/surface.lua")
 local safety = dofile(modpath .. "/motor/safety.lua")
 local mob_memory = dofile(modpath .. "/navigation/mob_memory.lua")
+local animator = dofile(modpath .. "/animation/animator.lua")
+local melee = dofile(modpath .. "/combat/melee.lua")
+local shooter = dofile(modpath .. "/combat/shooter.lua")
 
 --- Checks whether the given target is a connected, valid, living player or entity
 local is_valid_living_player = utils.is_player_alive
@@ -33,7 +36,13 @@ end
 ---@return number yaw
 function locomotion.safe_get_yaw(obj)
 	if obj and obj:is_valid() then
-		return obj:get_yaw() or 0
+		if obj.get_yaw then
+			return obj:get_yaw() or 0
+		elseif obj.get_look_horizontal then
+			return obj:get_look_horizontal() or 0
+		elseif obj.get_look_yaw then
+			return obj:get_look_yaw() or 0
+		end
 	end
 	return 0
 end
@@ -159,12 +168,28 @@ end
 function locomotion.halt_horizontal_velocity(self)
 	if not self or not self.object or not self.object:is_valid() then return end
 	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
-	local y_vel = self.in_water and (self.water_vy or self._liquid_vy or 0) or vel.y
+	local y_vel = self.in_water and (self.water_vy or self._liquid_vy or 0) or (self.is_floating and 0 or vel.y)
 	self.object:set_velocity({x = 0, y = y_vel, z = 0})
 	if not self.in_water and not self.is_floating then
 		locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
 	end
 end
+
+--- Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity
+---@param self table Mob entity instance
+---@param speed number Horizontal movement speed
+---@param yaw number Orientation angle in radians
+function locomotion.set_horizontal_velocity(self, speed, yaw)
+	if not self or not self.object or not self.object:is_valid() then return end
+	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
+	local y_vel = self.in_water and (self.water_vy or self._liquid_vy or 0) or (self.is_floating and 0 or vel.y)
+	local dir = core.yaw_to_dir(yaw)
+	self.object:set_velocity({x = dir.x * speed, y = y_vel, z = dir.z * speed})
+	if not self.in_water and not self.is_floating then
+		locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
+	end
+end
+
 
 --- Detects if entity has collided with a wall/solid obstacle or is physically stagnant against one
 ---@param self table Mob entity instance
@@ -416,8 +441,8 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 
 		local target_rot = surface.dir_to_surface_rotation(move_heading, active_normal)
 		local cur_rot = self._cur_rot or {x = 0, y = locomotion.safe_get_yaw(self.object), z = 0}
-		local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+		local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 		self._cur_rot = smoothed_rot
 		locomotion.safe_set_rotation(self.object, smoothed_rot)
 
@@ -481,7 +506,10 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 		speed = speed * 0.75
 	elseif self.is_floating then
 		locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-		local desired_y = next_waypoint.y + (self.hover_offset or 0.0)
+		local hover_h = (self.target or self.state == "fleeing" or self.state == "combat")
+			and (self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4))
+			or (self.hover_offset or 0.0)
+		local desired_y = next_waypoint.y + hover_h
 		local dy = desired_y - current_pos.y
 		y_vel = math.min(math.max(dy * 2.5, -5.0), 4.5)
 	else
@@ -505,8 +533,8 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 		local yaw = core.dir_to_yaw(move_vec)
 		local cur_rot = self._cur_rot or {x = 0, y = locomotion.safe_get_yaw(self.object) or 0, z = 0}
 		local target_rot = {x = 0, y = yaw, z = 0}
-		local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+		local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 		self._cur_rot = smoothed_rot
 		if math.abs(smoothed_rot.x) + math.abs(smoothed_rot.z) > 0.05 then
 			locomotion.safe_set_rotation(self.object, smoothed_rot)
@@ -618,9 +646,12 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 	if in_liquid then
 		y_vel = target_vy or 0
 	elseif self.is_floating then
-		local ground_y = utils.get_ground_y(current_pos, 16, 0, true)
+		local ground_y = utils.get_ground_y(current_pos, 24, 4, true)
+		local hover_h = (self.target or self.state == "fleeing" or self.state == "combat")
+			and (self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4))
+			or (self.hover_offset or 0.5)
 		if ground_y then
-			local desired_y = ground_y + (self.hover_offset or 1.8)
+			local desired_y = ground_y + hover_h
 			local dy = desired_y - current_pos.y
 			if dy < -0.2 then
 				y_vel = math.max(dy * 2.0, -3.5)
@@ -630,7 +661,7 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 				y_vel = 0
 			end
 		else
-			y_vel = 0
+			y_vel = -2.5
 		end
 	end
 
@@ -890,7 +921,9 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		safety.init_abilities(self)
 	end
 	local max_hp = self.hp_max or (self.initial_properties and self.initial_properties.hp_max) or 40
-	local return_thresh = self.return_hp_threshold or (max_hp * (self.return_ratio or 0.60))
+	local hr = (self._def and self._def.health_regen) or self.health_regen
+	local return_thresh = (hr and hr.return_threshold)
+		or self.return_hp_threshold or (max_hp * (self.return_ratio or 0.60))
 	local cur_hp = self.hp or (self.object and self.object:is_valid() and self.object:get_hp()) or max_hp
 	local is_panicking = (self.panic_timer and self.panic_timer > 0)
 	if not is_panicking and ((self.memory and not self.memory.flee_state) or cur_hp >= return_thresh) then
@@ -900,6 +933,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		self._flee_timer = nil
 		self._flee_last_pos = nil
 		self._flee_stagnant_timer = nil
+		self._flee_standoff = nil
 		return locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ceiling)
 	end
 
@@ -934,16 +968,34 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 	end
 
 	local fpos = mob_memory.get_fight_pos(self)
-	local ref_pos = fpos or (self.target and is_valid_living_player(self.target) and self.target:get_pos())
+	local ref_pos = (self.target and is_valid_living_player(self.target) and self.target:get_pos()) or fpos
 	if not is_panicking and ref_pos then
-		local max_flee = self.max_flee_distance or 15.0
+		local max_flee = (hr and hr.max_flee_distance)
+			or (self._def and self._def.max_flee_distance) or self.max_flee_distance or 15.0
 		local rdx = current_pos.x - ref_pos.x
 		local rdz = current_pos.z - ref_pos.z
 		local dist_sq = rdx * rdx + rdz * rdz
-		if dist_sq >= (max_flee * max_flee) then
+		local resume_dist = math.max(4.0, max_flee - 3.5)
+		local at_standoff = self._flee_standoff and (dist_sq >= (resume_dist * resume_dist))
+			or (dist_sq >= (max_flee * max_flee))
+
+		if at_standoff then
+			self._flee_standoff = true
 			locomotion.halt_horizontal_velocity(self)
 			if not on_wall_or_ceiling and not self.is_floating then
 				locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
+			elseif self.is_floating then
+				locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
+				local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+				local ground_y = utils.get_ground_y(current_pos, 8, 3, true)
+				if ground_y then
+					local desired_y = ground_y + combat_hover
+					local h_dy = desired_y - current_pos.y
+					if math.abs(h_dy) > 0.05 then
+						local flt_vy = math.min(math.max(h_dy * 2.5, -4.0), 3.0)
+						self.object:set_velocity({x = 0, y = flt_vy, z = 0})
+					end
+				end
 			end
 			self._flee_dir = nil
 			self._flee_stagnant_timer = 0.0
@@ -953,13 +1005,21 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 				local face_yaw = core.dir_to_yaw({x = -rdx / rlen, y = 0, z = -rdz / rlen})
 				local cur_rot = self._cur_rot or {x = 0, y = locomotion.safe_get_yaw(self.object) or 0, z = 0}
 				local target_rot = {x = 0, y = face_yaw, z = 0}
-				local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-				local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+				local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+				local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 				self._cur_rot = smoothed_rot
 				locomotion.safe_set_rotation(self.object, smoothed_rot)
 			end
+			if self.state ~= "idle" then
+				self.state = "idle"
+				animator.play(self.object, "idle", {speed = 1.0, loop = true})
+			end
 			return {moving = false, speed = 0, has_los = false}
+		else
+			self._flee_standoff = nil
 		end
+	else
+		self._flee_standoff = nil
 	end
 
 	self._flee_timer = (self._flee_timer or 0) - dtime
@@ -987,7 +1047,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		end
 	end
 
-	local speed = self.flee_speed or ((self.pursuit_speed or 4.0) * 1.25)
+	local speed = (hr and hr.flee_speed) or self.flee_speed or math.min((self.pursuit_speed or 4.0) * 1.05, 4.2)
 	local is_crawler = self.abilities and self.abilities.can_crawl
 
 	if is_crawler and not on_wall_or_ceiling then
@@ -1047,7 +1107,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 	end
 
 	local move_vec = self._flee_dir
-	if not on_wall_or_ceiling and not self.is_floating then
+	if not on_wall_or_ceiling then
 		local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 		local y_vel = vel.y
 		if in_liquid then
@@ -1058,6 +1118,17 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 				locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			end
 			speed = speed * 0.75
+		elseif self.is_floating then
+			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
+			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+			local ground_y = utils.get_ground_y(current_pos, 24, 4, true)
+			if ground_y then
+				local desired_y = ground_y + combat_hover
+				local h_dy = desired_y - current_pos.y
+				y_vel = math.min(math.max(h_dy * 2.5, -5.0), 3.5)
+			else
+				y_vel = -3.5
+			end
 		else
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
 		end
@@ -1199,6 +1270,10 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 				move_vec = self._flee_dir
 			else
 				self.object:set_velocity({x = 0, y = y_vel, z = 0})
+				if self.state ~= "idle" then
+					self.state = "idle"
+					animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				end
 				return {moving = false, speed = 0, has_los = false}
 			end
 		end
@@ -1206,8 +1281,8 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		local target_yaw = core.dir_to_yaw(move_vec)
 		local cur_rot = self._cur_rot or {x = 0, y = locomotion.safe_get_yaw(self.object) or 0, z = 0}
 		local target_rot = {x = 0, y = target_yaw, z = 0}
-		local max_rot_step = (self.max_angular_speed or 7.5) * dtime
-		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 10.0), max_rot_step)
+		local max_rot_step = (self.max_angular_speed or 4.0) * dtime
+		local smoothed_rot = surface.interpolate_rotation(cur_rot, target_rot, math.min(1.0, dtime * 6.5), max_rot_step)
 		self._cur_rot = smoothed_rot
 		locomotion.safe_set_rotation(self.object, smoothed_rot)
 	else
@@ -1252,8 +1327,9 @@ end
 ---@param self table Mob instance
 ---@param target_pos Vector Threat / target world position
 ---@param speed? number Movement speed (default: self.pursuit_speed or self.walk_speed or 3.0)
+---@param face_away? boolean If true, sets facing yaw towards chosen retreat escape direction instead of facing target
 ---@return boolean success True if a safe retreat direction was found and applied
-function locomotion.retreat_from(self, target_pos, speed)
+function locomotion.retreat_from(self, target_pos, speed, face_away)
 	local pos = self.object and self.object:get_pos()
 	if not pos or not target_pos then return false end
 
@@ -1280,8 +1356,8 @@ function locomotion.retreat_from(self, target_pos, speed)
 	local in_water = self.in_water or false
 	local water_vy = self.water_vy or 0
 	local abilities = in_water and
-		{can_swim = true, can_crawl = false, disallow_water = false} or
-		{can_swim = false, can_crawl = false, disallow_water = true}
+		{can_swim = true, can_crawl = false, disallow_water = false, is_floating = self.is_floating} or
+		{can_swim = false, can_crawl = false, disallow_water = true, is_floating = self.is_floating}
 
 	local chosen_dir = nil
 	for i = 1, #candidates do
@@ -1301,22 +1377,406 @@ function locomotion.retreat_from(self, target_pos, speed)
 		local y_vel = in_water and water_vy or vel.y
 		if not in_water and not self.is_floating then
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
+		elseif self.is_floating then
+			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
+			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+			local ground_y = utils.get_ground_y(pos, 24, 4, true)
+			if ground_y then
+				local desired_y = ground_y + combat_hover
+				local h_dy = desired_y - pos.y
+				y_vel = math.min(math.max(h_dy * 2.5, -5.0), 3.5)
+			else
+				y_vel = -3.5
+			end
 		end
 		self.object:set_velocity({
 			x = chosen_dir.x * k_speed,
 			y = y_vel,
 			z = chosen_dir.z * k_speed,
 		})
-		self.object:set_yaw(core.dir_to_yaw(vector.direction(pos, target_pos)))
+		local yaw = face_away and core.dir_to_yaw(chosen_dir) or core.dir_to_yaw(vector.direction(pos, target_pos))
+		self.object:set_yaw(yaw)
+		self._cur_rot = {x = 0, y = yaw, z = 0}
 		return true
 	else
 		local y_vel = in_water and water_vy or vel.y
 		if not in_water and not self.is_floating then
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
+		elseif self.is_floating then
+			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
+			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+			local ground_y = utils.get_ground_y(pos, 24, 4, true)
+			if ground_y then
+				local desired_y = ground_y + combat_hover
+				local h_dy = desired_y - pos.y
+				y_vel = math.min(math.max(h_dy * 2.5, -5.0), 3.5)
+			else
+				y_vel = -3.5
+			end
 		end
 		self.object:set_velocity({x = 0, y = y_vel, z = 0})
-		self.object:set_yaw(core.dir_to_yaw(vector.direction(pos, target_pos)))
+		local yaw = core.dir_to_yaw(vector.direction(pos, target_pos))
+		self.object:set_yaw(yaw)
+		self._cur_rot = {x = 0, y = yaw, z = 0}
 		return false
+	end
+end
+
+--- Advances tactical retreat, standoff kiting, and close-quarters retaliation for fleeing mobs.
+--- Unifies forward-sprint escape locomotion, 180° standoff projectile kiting, and close-quarters
+--- melee retaliation when cornered or caught.
+---@param self table Entity instance
+---@param dtime number Step delta time
+---@param def? table Entity definition table
+---@param _moveresult? table Engine move result
+---@return boolean handled True if tactical retreat handled this step
+function locomotion.step_tactical_retreat(self, dtime, def, _moveresult)
+	if not self or not self.object or not self.object:is_valid() then
+		return false
+	end
+
+	def = def or self._def or {}
+
+	-- Check pack follower leash: prevent minion from fleeing beyond leash distance from leader
+	if self.pack_role == "member" or (def.pack and def.pack.role == "member") then
+		local within_leash, s_pos = x_mob_core.pack.coordination.check_leash(self)
+		if not within_leash and s_pos then
+			self.panic_timer = nil
+			if self.memory then
+				self.memory.flee_state = false
+				self.memory.flee_hp_lock = nil
+				mob_memory.clear_danger_memory(self)
+			end
+			if self.on_return_to_fight then
+				self:on_return_to_fight()
+			else
+				self.state = "regrouping"
+			end
+			return true
+		end
+	end
+
+	if def then
+		self._def = def
+	end
+
+	local pos = self.object:get_pos()
+	if not pos then return false end
+
+	local target = self.target
+	local has_living_target = target and utils.is_player_alive(target)
+
+	-- If no living target, retreat away from environmental danger/threat memory
+	if not has_living_target then
+		local flee_anim = (def.animations and def.animations.flee and "flee")
+			or (def.animations and def.animations.run and "run") or "walk"
+		animator.play(self.object, flee_anim, {speed = 1.25, loop = true})
+		local res = locomotion.handle_mob_fleeing(self, dtime, pos, self.on_wall_or_ceiling)
+		if res and res.moving == false then
+			if self.state ~= "idle" then
+				self.state = "idle"
+				animator.play(self.object, "idle", {speed = 1.0, loop = true})
+			end
+		end
+		return true
+	end
+
+	local tpos = target:get_pos()
+	if not tpos then return false end
+
+	local dist = vector.distance(pos, tpos)
+	local to_target = vector.direction(pos, tpos)
+	to_target.y = 0
+	local t_len = math.sqrt(to_target.x * to_target.x + to_target.z * to_target.z)
+	if t_len > 0.001 then
+		to_target = {x = to_target.x / t_len, y = 0, z = to_target.z / t_len}
+	else
+		to_target = {x = 0, y = 0, z = 1}
+	end
+	local face_yaw = core.dir_to_yaw(to_target)
+
+	-- 1. Close-Quarters Retaliation: if caught or cornered in melee reach, turn and fight back
+	local m_cfg = type(def.melee) == "table" and def.melee or {}
+	local is_melee_capable = (def.melee ~= false) and
+		(def.melee ~= nil or def.damage or def.attack_range or def.perform_attack)
+	local reach = m_cfg.range or (not def.shooter and def.attack_range) or 2.0
+	local max_h_diff = m_cfg.max_height_diff or 2.0
+	local dx = pos.x - tpos.x
+	local dz = pos.z - tpos.z
+	local hdist = math.sqrt(dx * dx + dz * dz)
+	local vdist = math.abs(pos.y - tpos.y)
+	local in_reach = (dist <= reach) or (hdist <= reach and vdist <= max_h_diff)
+
+	if is_melee_capable and in_reach then
+		local eye_pos = {x = pos.x, y = pos.y + (self.eye_offset or 1.5), z = pos.z}
+		local target_eye = {x = tpos.x, y = tpos.y + 1.2, z = tpos.z}
+		if utils.line_of_sight(eye_pos, target_eye) then
+			-- If caught in melee reach while channeling heal, channel is interrupted!
+			if self.state == "channeling" then
+				self._flee_channel_timer = nil
+				self._flee_burst_timer = 0
+				self._flee_used = true
+				if self.memory then self.memory.flee_state = false end
+				self.state = "combat"
+			end
+			locomotion.halt_horizontal_velocity(self)
+			locomotion.safe_set_yaw(self.object, face_yaw)
+			self._cur_rot = {x = 0, y = face_yaw, z = 0}
+
+			if (self.attack_cooldown or 0) <= 0 then
+				melee.step(self, dtime, def)
+				return true
+			else
+				if self.state ~= "attacking" and self.state ~= "idle" then
+					self.state = "idle"
+					animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				end
+				return true
+			end
+		end
+	end
+
+	-- 2. Tactical Shooter Standoff Kiting: turn and sprint forward, turn 180° around to shoot
+	-- Note: Mobs fleeing to recover health or panicking execute a full escape retreat (Section 3)
+	local hr = def.health_regen or (self._def and self._def.health_regen) or self.health_regen
+	local is_healing_flee = hr and (hr.flee_threshold or 0) > 0 and (
+		(self.memory and self.memory.flee_state) or
+		((self.hp or 0) <= (hr.flee_threshold or 0))
+	)
+	local is_panicking = (self.panic_timer and self.panic_timer > 0)
+	local s_cfg = type(def.shooter) == "table" and def.shooter or {}
+	local can_shoot_in_retreat = def.shooter and (s_cfg.shoot_while_retreating == true or
+		(not is_healing_flee and not is_panicking))
+
+	if can_shoot_in_retreat then
+		local standoff_min = s_cfg.min_range or 6.0
+		local standoff_max = s_cfg.range or def.attack_range or 15.0
+		local max_flee = (hr and hr.max_flee_distance) or def.max_flee_distance or self.max_flee_distance or 14.0
+
+		if dist < standoff_min then
+			-- Inside standoff: sprint forward away from threat (no moonwalking!)
+			local flee_anim = (def.animations and def.animations.flee and "flee")
+				or (def.animations and def.animations.run and "run") or "run"
+			animator.play(self.object, flee_anim, {speed = 1.25, loop = true})
+			local res = locomotion.handle_mob_fleeing(self, dtime, pos, self.on_wall_or_ceiling)
+			if res and res.moving == false then
+				if self.state ~= "idle" then
+					self.state = "idle"
+					animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				end
+			end
+			return true
+		elseif dist <= standoff_max then
+			-- In optimal standoff bracket: check line of sight to fire
+			local eye_pos = {x = pos.x, y = pos.y + (self.eye_offset or 1.5), z = pos.z}
+			local target_eye = {x = tpos.x, y = tpos.y + 1.2, z = tpos.z}
+			local los = utils.line_of_sight(eye_pos, target_eye)
+
+			local shoot_ready = (self.attack_cooldown or 0) <= 0 and
+				(not self.cooldowns or (self.cooldowns.shoot or 0) <= 0)
+
+			if los and shoot_ready then
+				locomotion.halt_horizontal_velocity(self)
+				locomotion.safe_set_yaw(self.object, face_yaw)
+				self._cur_rot = {x = 0, y = face_yaw, z = 0}
+				shooter.step(self, dtime, def)
+				return true
+			elseif s_cfg.shoot_while_retreating == true and dist < max_flee then
+				-- Shoot is on cooldown: continue running away until max_flee_distance is reached
+				local flee_anim = (def.animations and def.animations.flee and "flee")
+					or (def.animations and def.animations.run and "run") or "run"
+				animator.play(self.object, flee_anim, {speed = 1.25, loop = true})
+				local res = locomotion.handle_mob_fleeing(self, dtime, pos, self.on_wall_or_ceiling)
+				if res and res.moving == false then
+					if self.state ~= "idle" then
+						self.state = "idle"
+						animator.play(self.object, "idle", {speed = 1.0, loop = true})
+					end
+				end
+				return true
+			else
+				locomotion.halt_horizontal_velocity(self)
+				locomotion.safe_set_yaw(self.object, face_yaw)
+				self._cur_rot = {x = 0, y = face_yaw, z = 0}
+				if self.state ~= "attacking" and self.state ~= "shooting" and self.state ~= "idle" then
+					self.state = "idle"
+					animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				end
+				return true
+			end
+		else
+			-- Beyond maximum standoff distance: safe distance reached, halt, face threat and recover
+			locomotion.halt_horizontal_velocity(self)
+			locomotion.safe_set_yaw(self.object, face_yaw)
+			self._cur_rot = {x = 0, y = face_yaw, z = 0}
+			if self.state ~= "idle" then
+				self.state = "idle"
+				animator.play(self.object, "idle", {speed = 1.0, loop = true})
+			end
+			return true
+		end
+	end
+
+	-- Escape Retreat: Tactical Disengage & Channel vs Unlimited Flee
+	local is_unlimited = hr and (hr.unlimited_flee == true)
+
+	if is_unlimited then
+		-- Unlimited continuous fleeing (e.g. Fallen Minion)
+		local max_flee = (hr and hr.max_flee_distance) or def.max_flee_distance or self.max_flee_distance or 15.0
+		local resume_dist = math.max(4.0, max_flee - 3.5)
+		local at_standoff = self._flee_standoff and (dist >= resume_dist) or (dist >= max_flee)
+
+		if at_standoff then
+			self._flee_standoff = true
+			locomotion.halt_horizontal_velocity(self)
+			locomotion.safe_set_yaw(self.object, face_yaw)
+			self._cur_rot = {x = 0, y = face_yaw, z = 0}
+			if self.is_floating then
+				local ground_y = utils.get_ground_y(pos, 24, 4, true)
+				if ground_y then
+					local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+					local desired_y = ground_y + combat_hover
+					local h_dy = desired_y - pos.y
+					if math.abs(h_dy) > 0.05 then
+						local flt_vy = math.min(math.max(h_dy * 2.5, -4.0), 3.0)
+						self.object:set_velocity({x = 0, y = flt_vy, z = 0})
+					end
+				else
+					self.object:set_velocity({x = 0, y = -3.5, z = 0})
+				end
+			end
+			if self.state ~= "idle" then
+				self.state = "idle"
+				animator.play(self.object, "idle", {speed = 1.0, loop = true})
+			end
+			return true
+		else
+			self._flee_standoff = nil
+			local flee_anim = (def.animations and def.animations.flee and "flee")
+				or (def.animations and def.animations.run and "run") or "walk"
+			animator.play(self.object, flee_anim, {speed = 1.25, loop = true})
+			local res = locomotion.handle_mob_fleeing(self, dtime, pos, self.on_wall_or_ceiling)
+			if res and res.moving == false then
+				if def.shooter then
+					locomotion.safe_set_yaw(self.object, face_yaw)
+					self._cur_rot = {x = 0, y = face_yaw, z = 0}
+				end
+				if self.state ~= "idle" then
+					self.state = "idle"
+					animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				end
+			end
+			return true
+		end
+	else
+		-- Tactical Disengage: Single disengage burst -> stationary vulnerable healing channel
+		if self._flee_used then
+			-- Mob already executed its single tactical retreat this combat. Stand and fight!
+			if self.memory then self.memory.flee_state = false end
+			if self.state == "fleeing" or self.state == "channeling" then
+				self.state = "combat"
+			end
+			return false
+		end
+
+		if self.state == "channeling" then
+			locomotion.halt_horizontal_velocity(self)
+			locomotion.safe_set_yaw(self.object, face_yaw)
+			self._cur_rot = {x = 0, y = face_yaw, z = 0}
+			if self.is_floating then
+				local ground_y = utils.get_ground_y(pos, 24, 4, true)
+				if ground_y then
+					local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
+					local desired_y = ground_y + combat_hover
+					local h_dy = desired_y - pos.y
+					if math.abs(h_dy) > 0.05 then
+						local flt_vy = math.min(math.max(h_dy * 2.5, -4.0), 3.0)
+						self.object:set_velocity({x = 0, y = flt_vy, z = 0})
+					end
+				else
+					self.object:set_velocity({x = 0, y = -3.5, z = 0})
+				end
+			end
+			animator.play(self.object, "idle", {speed = 1.0, loop = true})
+
+			self._channel_vfx_timer = (self._channel_vfx_timer or 0) + dtime
+			if self._channel_vfx_timer >= 0.6 then
+				self._channel_vfx_timer = 0
+				if not hr or hr.overlay ~= false then
+					x_mob_core.indicate_regen(self.object, hr and hr.overlay_color or "^[colorize:#FFFFFF60")
+				end
+			end
+
+			self._flee_channel_timer = (self._flee_channel_timer or (hr and hr.channel_duration) or 3.0) - dtime
+			if self._flee_channel_timer <= 0 then
+				-- Channel completed uninterrupted! Restore health and re-engage combat!
+				local max_hp = self.hp_max or (self.initial_properties and self.initial_properties.hp_max) or 20
+				local restore = (hr and hr.heal_amount) or
+					math.max(1, ((hr and hr.return_threshold) or math.floor(max_hp * 0.6)) - (self.hp or max_hp))
+				local old_hp = self.hp or max_hp
+				local new_hp = math.min(max_hp, old_hp + restore)
+				self.hp = new_hp
+				if self.object and self.object:is_valid() then
+					self.object:set_hp(new_hp)
+				end
+				if not hr or hr.overlay ~= false then
+					x_mob_core.indicate_regen(self.object, hr and hr.overlay_color or "^[colorize:#FFFFFF60")
+				end
+				x_mob_core.combat.health_bar.on_hp_change(self, old_hp, new_hp, def)
+
+				self._flee_channel_timer = nil
+				self._flee_burst_timer = nil
+				self._flee_used = true
+				if self.memory then
+					self.memory.flee_state = false
+					self.memory.flee_hp_lock = nil
+				end
+				self.state = "walk"
+				if self.on_return_to_fight then
+					self:on_return_to_fight()
+				end
+			end
+			return true
+		else
+			-- Initial Disengage Burst Sprint (counts down to 0 or until safe distance reached)
+			if not self._flee_burst_timer then
+				self._flee_burst_timer = (hr and hr.burst_duration) or 3.5
+			end
+			self._flee_burst_timer = self._flee_burst_timer - dtime
+			local safe_dist = (hr and hr.safe_distance) or 10.0
+
+			if dist >= safe_dist or self._flee_burst_timer <= 0 then
+				-- Reached safe distance or burst expired: halt and begin vulnerable healing channel!
+				self._flee_burst_timer = 0
+				self._flee_channel_timer = (hr and hr.channel_duration) or 3.0
+				self.state = "channeling"
+				locomotion.halt_horizontal_velocity(self)
+				locomotion.safe_set_yaw(self.object, face_yaw)
+				self._cur_rot = {x = 0, y = face_yaw, z = 0}
+				animator.play(self.object, "idle", {speed = 1.0, loop = true})
+				if not hr or hr.overlay ~= false then
+					x_mob_core.indicate_regen(self.object, hr and hr.overlay_color or "^[colorize:#FFFFFF60")
+				end
+				return true
+			else
+				-- Sprint away during burst
+				local flee_anim = (def.animations and def.animations.flee and "flee")
+					or (def.animations and def.animations.run and "run") or "walk"
+				animator.play(self.object, flee_anim, {speed = 1.25, loop = true})
+				local res = locomotion.handle_mob_fleeing(self, dtime, pos, self.on_wall_or_ceiling)
+				if res and res.moving == false then
+					if def.shooter then
+						locomotion.safe_set_yaw(self.object, face_yaw)
+						self._cur_rot = {x = 0, y = face_yaw, z = 0}
+					end
+					if self.state ~= "idle" then
+						self.state = "idle"
+						animator.play(self.object, "idle", {speed = 1.0, loop = true})
+					end
+				end
+				return true
+			end
+		end
 	end
 end
 

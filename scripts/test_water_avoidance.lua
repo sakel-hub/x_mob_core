@@ -88,33 +88,31 @@ local vector = {
 }
 _G.vector = vector
 
+local node_cache = dofile("./motor/node_cache.lua")
+
 local function set_node(x, y, z, name)
 	local k = string.format("%d,%d,%d", x, y, z)
 	world_nodes[k] = {name = name}
-	if _G.x_mob_core and _G.x_mob_core.motor and _G.x_mob_core.motor.node_cache then
-		_G.x_mob_core.motor.node_cache.clear()
-	end
+	node_cache.clear()
 end
 
 local function clear_world()
 	world_nodes = {}
-	if _G.x_mob_core and _G.x_mob_core.motor and _G.x_mob_core.motor.node_cache then
-		_G.x_mob_core.motor.node_cache.clear()
-	end
+	node_cache.clear()
 end
 
 -- Load subsystems
 local utils = dofile("./core/utils.lua")
 local mob_memory = dofile("./navigation/mob_memory.lua")
-local node_cache = dofile("./motor/node_cache.lua")
 local doors = dofile("./motor/doors.lua")
 local surface = dofile("./motor/surface.lua")
 local safety = dofile("./motor/safety.lua")
 local locomotion = dofile("./motor/locomotion.lua")
-local mob_ai = dofile("./motor/mob_ai.lua")
+local fast_pathfinder = dofile("./navigation/fast_pathfinder.lua")
 
 _G.x_mob_core = {
 	utils = utils,
+	fast_pathfinder = fast_pathfinder,
 	mob_memory = mob_memory,
 	animator = {
 		play = function(_obj, _anim, _opts) end,
@@ -131,9 +129,11 @@ _G.x_mob_core = {
 		surface = surface,
 		safety = safety,
 		locomotion = locomotion,
-		ai = mob_ai,
 	},
 }
+
+local mob_ai = dofile("./motor/mob_ai.lua")
+_G.x_mob_core.motor.ai = mob_ai
 
 local test_count = 0
 local pass_count = 0
@@ -246,6 +246,17 @@ assert_eq(reason2, "water", "is_step_safe provides 'water' rejection reason with
 local safe_water_swim, _ = safety.is_step_safe(
 	current_pos, to_water_dir, {can_swim = true, disallow_water = false})
 assert_true(safe_water_swim, "is_step_safe allows stepping into water when can_swim = true and disallow_water = false")
+
+-- Stepping towards water as a floating mob with disallow_water = true (hover clearance inspection)
+local floating_pos = {x = 0, y = 1.6, z = 0}
+local safe_floating_water, reason_floating = safety.is_step_safe(
+	floating_pos, to_water_dir, {is_floating = true, can_swim = false, disallow_water = true})
+assert_false(safe_floating_water, "is_step_safe rejects floating over water when disallow_water = true")
+assert_eq(reason_floating, "water", "is_step_safe provides 'water' rejection reason for floating mob")
+
+local safe_floating_land = safety.is_step_safe(
+	floating_pos, to_land_dir, {is_floating = true, can_swim = false, disallow_water = true})
+assert_true(safe_floating_land, "is_step_safe allows floating mob to step towards dry solid land")
 
 -- Drop-down onto water test
 clear_world()
