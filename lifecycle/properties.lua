@@ -177,8 +177,16 @@ function properties.resolve_mob_properties(def)
 		props.visual = (props.mesh or def.mesh) and "mesh" or "cube"
 	end
 
-	-- Floating locomotion configuration
-	if def.is_floating == nil then def.is_floating = false end
+	-- Floating & aquatic locomotion configuration
+	if def.is_floating == nil then
+		def.is_floating = (def.fly == true) or (def.type == "flying") or false
+	end
+	def.fly = nil
+	if def.is_aquatic == nil then
+		def.is_aquatic = (def.aquatic == true) or (def.shoal ~= nil) or
+			(def.type == "aquatic") or (def.mob_type == "aquatic") or false
+	end
+	def.aquatic = nil
 	if props.makes_footstep_sound == nil then
 		props.makes_footstep_sound = not def.is_floating
 	end
@@ -224,9 +232,30 @@ function properties.resolve_mob_properties(def)
 	if def.can_open_doors == nil then def.can_open_doors = false end
 	if def.can_crawl == nil then def.can_crawl = false end
 	def.hover_offset = def.hover_offset or 0.4
+	def.combat_hover_offset = def.combat_hover_offset or math.min(def.hover_offset or 0.35, 0.4)
+	if def.flight_elevation == nil and def.is_floating then
+		def.flight_elevation = def.hover_offset
+	end
 
 	def.attack_range = def.attack_range or 2.0
+	def.combat_standoff = def.combat_standoff or math.max(1.3, def.attack_range * 0.7)
 	def.aggro_radius = def.aggro_radius or 16.0
+
+	-- Environmental hazard immunities table (Single Source of Truth)
+	local raw_im = def.immunities or def.immune_to
+	local im_table = (type(raw_im) == "table") and raw_im or {}
+	def.immunities = {
+		environment = (im_table.environment == true),
+		damage_per_second = (im_table.damage_per_second == true),
+		lava = (im_table.lava == true) or (def.immune_to_lava == true),
+		fire = (im_table.fire == true) or (def.immune_to_fire == true),
+		drown = (im_table.drown == true) or (im_table.water == true),
+		suffocation = (im_table.suffocation == true) or (im_table.block_suffocation == true),
+	}
+	def.immune_to = nil
+	def.immune_to_lava = nil
+	def.immune_to_fire = nil
+
 	-- Health regeneration & tactical fleeing: canonical def.health_regen configuration
 	local raw_hr = def.health_regen
 	local hr_table = (type(raw_hr) == "table") and raw_hr or {}
@@ -247,7 +276,7 @@ function properties.resolve_mob_properties(def)
 
 	local passive = (hr_table.passive == true)
 	local overlay = (hr_table.overlay ~= false)
-	local overlay_color = hr_table.overlay_color or hr_table.color or "^[colorize:#FFFFFF60"
+	local overlay_color = hr_table.overlay_color or "^[colorize:#FFFFFF60"
 
 	local flee_threshold
 	if hr_table.can_flee == false then
@@ -269,6 +298,14 @@ function properties.resolve_mob_properties(def)
 		return_threshold = math.floor(hp_max * 0.60)
 	end
 
+	local unlimited_flee = (hr_table.unlimited_flee == true)
+	local burst_duration = tonumber(hr_table.burst_duration) or 3.5
+	local channel_duration = tonumber(hr_table.channel_duration) or 3.0
+	local safe_distance = tonumber(hr_table.safe_distance) or 10.0
+	local heal_amount = tonumber(hr_table.heal_amount) or math.max(1, return_threshold - flee_threshold)
+	local flee_speed = tonumber(hr_table.flee_speed) or tonumber(def.flee_speed)
+	local max_flee_dist = tonumber(hr_table.max_flee_distance) or tonumber(def.max_flee_distance) or 15.0
+
 	-- Canonical single source of truth table
 	def.health_regen = {
 		enabled = enabled,
@@ -278,6 +315,13 @@ function properties.resolve_mob_properties(def)
 		overlay_color = overlay_color,
 		flee_threshold = flee_threshold,
 		return_threshold = return_threshold,
+		unlimited_flee = unlimited_flee,
+		burst_duration = burst_duration,
+		channel_duration = channel_duration,
+		safe_distance = safe_distance,
+		heal_amount = heal_amount,
+		flee_speed = flee_speed,
+		max_flee_distance = max_flee_dist,
 	}
 end
 

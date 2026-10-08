@@ -6,9 +6,9 @@
 ]]
 
 ---@class StepHook
----@field name string Identifier of the hook
----@field priority integer Execution order (lower runs first)
----@field handler fun(self: table, dtime: number, def: table, moveresult?: table): boolean|nil
+---@field name string Unique identifier of the hook (e.g. "mymod:freeze_aura")
+---@field priority integer Execution order (lower runs first; see priority schedule in documentation)
+---@field handler StepHookHandler Middleware callback executed each step
 
 ---@class StepPipeline
 local pipeline = {
@@ -16,11 +16,12 @@ local pipeline = {
 	hooks = {},
 }
 
----Registers a step middleware hook executed during handle_core_step.
+---Registers a step middleware hook executed during entity step lifecycle.
+---Hooks execute sequentially in ascending priority order on every server tick.
 ---If the handler returns `true`, subsequent step handling is intercepted (early return).
----@param name string Unique hook identifier
----@param priority integer Execution order (e.g. 10 for pre-combat, 50 for combat, 100 for post)
----@param handler fun(self: table, dtime: number, def: table, moveresult?: table): boolean|nil
+---@param name string Unique hook identifier (namespaced, e.g. "mymod:freeze_aura")
+---@param priority integer Execution order (lower runs first; e.g. < 18 for CC/stun, 18 melee, 20 shooter, 50+ aura)
+---@param handler StepHookHandler Callback function. Return `true` to intercept, or `false`/`nil` to continue.
 function pipeline.register_step_hook(name, priority, handler)
 	for i = 1, #pipeline.hooks do
 		if pipeline.hooks[i].name == name then
@@ -38,8 +39,8 @@ function pipeline.register_step_hook(name, priority, handler)
 	table.sort(pipeline.hooks, function(a, b) return a.priority < b.priority end)
 end
 
----Unregisters a previously registered step hook.
----@param name string
+---Unregisters a previously registered step hook by identifier name.
+---@param name string Unique hook identifier to remove
 function pipeline.unregister_step_hook(name)
 	for i = #pipeline.hooks, 1, -1 do
 		if pipeline.hooks[i].name == name then
@@ -50,11 +51,12 @@ function pipeline.unregister_step_hook(name)
 end
 
 ---Executes registered step hooks sequentially in priority order.
+---If any hook handler returns `true`, pipeline execution halts immediately and returns `true`.
 ---@param self table Mob entity instance
----@param dtime number Step delta time
----@param def table Entity definition table
+---@param dtime number Step delta time in seconds
+---@param def MobRegistrationDef|table Entity definition table
 ---@param moveresult? table Engine move result
----@return boolean handled True if intercepted by any hook
+---@return boolean handled True if intercepted by any hook, false otherwise
 function pipeline.execute(self, dtime, def, moveresult)
 	local hook_list = pipeline.hooks
 	for i = 1, #hook_list do

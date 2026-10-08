@@ -19,28 +19,215 @@
 ---@field role? "leader"|"member" Role within the pack
 ---@field pack_id? string Optional existing pack UUID
 ---@field leader_type? string Expected entity name of the leader
----@field follower_type? string Expected entity name of the followers
+---@field follower_type? string|string[] Expected entity name or list of entity names of the followers
 ---@field max_followers? integer Max followers for a leader (default: 3)
 ---@field leash_distance? number Distance before followers regroup (default: 18.0)
 ---@field regroup_distance? number Target distance when regrouping to leader (default: 4.0)
 ---@field spawn_on_init? boolean Whether leader auto-spawns initial followers on activate
-
+---@field auto_succession? boolean Whether surviving followers promote new leader on death (default: false)
 ---@field on_leader_lost? "fight"|"flee"|fun(self: table, leader?: table) Callback or behavior when pack leader dies
+---@field swarm_alert? boolean|SwarmAlertDef Declarative pack & faction rally configuration on damage and death
 
+---Individual melee attack profile for declarative single or multi-attack combat.
+---Used inside the `attacks` array of `MeleeConfigDef`, or as a single attack definition.
+---
+---### Attribute Precedence & Exclusivity Rules:
+---- **`aoe = true` vs `perform_attack`**: Setting `aoe = true` **requires** `perform_attack`.
+---  When `aoe = true` and `perform_attack` is provided, line-of-sight and target range re-validation
+---  at `delay` time are **bypassed**, ensuring the attack executes at the ground epicenter even if the
+---  primary target dodged, jumped away, or moved out of range during windup. If `perform_attack` is omitted,
+---  `aoe = true` is **ignored** and standard single-target range validation applies.
+---- **`aoe = true` vs `reach_tolerance`**: `reach_tolerance` is **ignored** when `aoe = true`, because
+---  target distance is not re-checked at impact time.
+---- **`perform_attack` vs `damage`**: When `perform_attack` is provided, default engine `target:punch(...)`
+---  is bypassed, so the `damage` field is **ignored** by the core loop (the callback applies its own damage).
+---- **`on_strike` vs `perform_attack`**: `on_strike` runs after impact. With default punch, it executes
+---  immediately after `target:punch(...)`. If `perform_attack` is provided, `on_strike` runs after `perform_attack`.
+---  For AoE attacks, splash logic should reside directly inside `perform_attack`.
+---- **`on_start` vs `on_charge`**: `on_charge` is a backwards-compatible alias for `on_start`.
+---@class MeleeAttackDef
+---@field weight? number Relative selection probability weight when choosing between multiple attacks (default: 1)
+---@field animation? string Animation track name played when initiating this attack (default: "attack")
+---@field anim_speed? number Playback speed multiplier for the attack animation (default: 1.2)
+---@field sound? string Sound played upon initiating the attack (default: "attack")
+---@field duration? number Action timer duration holding the attacking state in seconds (default: 0.5)
+---@field cooldown? number Cooldown interval before next attack can begin in seconds (default: 1.2)
+---@field delay? number Keyframe impact delay before punch or callback executes in seconds (default: 0.25)
+---@field damage? number Base melee strike damage dealt to target (default: 4; ignored if perform_attack is set)
+---Additional reach buffer for moving targets at hit time (default: 0.6; ignored if aoe = true).
+---@field reach_tolerance? number
+---@field aoe? boolean Area of Effect flag; bypasses target range/LOS checks at impact time (requires perform_attack)
+---@field on_start? fun(self: table, target?: ObjectRef) Callback executed immediately upon attack initiation
+---@field on_charge? fun(self: table, target?: ObjectRef) Alias for on_start
+---@field on_strike? fun(self: table, target: ObjectRef, dir: Vector) Callback executed on punch impact
+---Custom melee attack callback override.
+---@field perform_attack? fun(self: table, target: ObjectRef|nil, dir: Vector, def?: table, active_attack?: table)
+
+---Declarative close-quarters melee combat configuration.
+---When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
+---reach distance validation, raycast line-of-sight checks, horizontal velocity halting,
+---attack animations, directional audio cues, cooldown intervals, and timed strike impacts.
+---
+---### How It Works:
+---1. **Reach & Line of Sight**: During each tick, checks if target distance <= `range` and target is visible.
+---2. **Halting & Facing**: Upon reach entry, halts horizontal movement and turns the mob to face the target.
+---3. **Strike Execution**: Starts `duration` pose, triggers `animation`, plays `sound`, and queues delayed hit.
+---4. **Tolerance Validation**: At `delay` time, confirms target remains within `range + reach_tolerance`
+---   (bypassed if `aoe = true`).
+---5. **Impact Feedback**: Applies fleshy punch damage (or calls `perform_attack`) and invokes `on_strike`.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`attacks = { ... }` vs Top-Level Fields**:
+---  When `attacks` is provided with one or more `MeleeAttackDef` entries, attack selection rolls randomly
+---  based on `weight`. The selected attack's `animation`, `anim_speed`, `sound`, `duration`, `cooldown`, `delay`,
+---  `damage`, `reach_tolerance`, `aoe`, `on_start`, and `perform_attack` take precedence over top-level fields.
+---  Top-level `range` and `max_height_diff` are ALWAYS the common spatial triggers to initiate melee combat.
+---- **`aoe = true` vs `perform_attack` vs `reach_tolerance`**:
+---  `aoe = true` requires `perform_attack`. Bypasses target distance and line-of-sight re-validation at `delay`
+---  time, ensuring ground smashes, shockwaves, or radial spells detonate at the epicenter even if the primary
+---  target sprinted away. `reach_tolerance` and `damage` are ignored.
+---- **`melee` vs `shooter` Interplay**:
+---  Pipeline Priority 18 (`melee`) runs before Priority 20 (`shooter`).
+---  When a target is within `melee.range`, melee intercepts combat, halts movement, and returns `true`,
+---  preventing `shooter` from firing. When outside `melee.range`, melee returns `false`, allowing `shooter`
+---  to kite or fire projectiles at range.
+---- **`melee = false`**:
+---  Completely disables melee combat, even if the target is within point-blank range (used for pure ranged mobs).
+---  If `shooter` is defined and `melee` is `nil`, melee defaults to disabled.
+---
+---### Usage Examples:
+---```lua
+----- Simple single-attack melee
+---melee = {
+---    range = 2.4,
+---    damage = 6,
+---    cooldown = 1.4,
+---    duration = 0.7,
+---    delay = 0.35,
+---    animation = "attack",
+---    sound = "attack",
+---    on_strike = function(self, target, dir)
+---        -- Custom impact VFX or effects
+---    end,
+---}
+---
+----- Multi-attack with primary punch and weighted AoE smash
+---melee = {
+---    range = 3.2,
+---    attacks = {
+---        {
+---            weight = 80,
+---            animation = "punch",
+---            damage = 7,
+---            cooldown = 1.4,
+---            delay = 0.35,
+---        },
+---        {
+---            weight = 20,
+---            animation = "smash",
+---            duration = 1.4,
+---            cooldown = 2.2,
+---            delay = 0.40,
+---            aoe = true, -- Bypasses target range check at impact time
+---            perform_attack = function(self, target, dir)
+---                -- Custom radial AoE blast damage
+---            end,
+---        },
+---    },
+---}
+---```
+---@class MeleeConfigDef
+---@field range? number Melee attack reach in nodes; entry trigger for melee combat (default: def.attack_range or 2.0)
+---@field max_height_diff? number Vertical reach tolerance in nodes (default: 2.0)
+---Additional reach buffer for moving targets at hit time (default: 0.6; ignored if aoe = true).
+---@field reach_tolerance? number
+---@field attacks? MeleeAttackDef[] Array of weighted attacks; overrides top-level attack attributes when populated
+---@field weight? number Default selection weight (default: 1)
+---Base melee strike damage dealt to targets (default: def.damage or 4; ignored if perform_attack is set).
+---@field damage? number
+---@field cooldown? number Attack cooldown between strikes in seconds (default: def.attack_interval or 1.2)
+---@field duration? number Action timer duration holding attack pose in seconds (default: 0.5)
+---@field delay? number Delay before punch damage or callback executes in seconds (default: 0.25)
+---@field animation? string Animation track name played when attacking (default: "attack")
+---@field anim_speed? number Animation playback speed multiplier (default: 1.2)
+---@field sound? string Sound played when attacking (default: "attack")
+---@field aoe? boolean Area of Effect flag; bypasses target range/LOS checks at impact time (requires perform_attack)
+---@field on_start? fun(self: table, target?: ObjectRef) Callback executed immediately upon attack initiation
+---@field on_charge? fun(self: table, target?: ObjectRef) Alias for on_start
+---@field on_strike? fun(self: table, target: ObjectRef, dir: Vector) Callback executed on punch impact
+---Custom melee attack callback override.
+---@field perform_attack? fun(self: table, target: ObjectRef|nil, dir: Vector, def?: table, active_attack?: table)
+
+---Declarative ranged combat, projectile firing, and tactical kiting configuration.
+---When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
+---distance acquisition, line-of-sight checks, tactical kiting/retreat, charge windup callbacks,
+---velocity-based lead aim prediction, and projectile spawning.
+---
+---### How It Works:
+---1. **Distance Acquisition**: Engages when target distance is between `min_range` and `range` with line-of-sight.
+---2. **Tactical Kiting**: When target closes inside `min_range`, mob steers away at `retreat_speed`
+---   (unless `kiting = false`).
+---3. **Charge & Windup**: Sets `action_timer = fire_duration`, plays `animation`, `sound`, and calls `on_charge`.
+---4. **Aim Prediction**: After `fire_delay`, calculates lead trajectory if `predict_aim = true`.
+---5. **Spawning & Launch**: Spawns `projectile`, sets flight velocity/rotation, and calls `on_shoot`
+---   (or invokes `on_fire`).
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`on_fire` vs `projectile` & `on_shoot`**:
+---  If `on_fire` is provided, automatic entity spawning of `projectile` and `on_shoot` are **ignored**.
+---  `on_fire` gives complete custom control over raycasting, multi-projectile salvos, or custom spell mechanics.
+---- **`projectile = false`**: Explicitly disables entity spawning if `on_fire` is not used.
+---- **`kiting = false`**: Disables tactical retreat when target is closer than `min_range`.
+---  Allows hybrid mobs to yield to locomotion AI and close into melee range rather than kiting.
+---- **`shoot_while_retreating`**: If `true` (default), mob continues firing while kiting backward.
+---  If `false`, mob holds movement to fire or only flees when target is inside `min_range`.
+---- **`melee` vs `shooter`**: Melee (Priority 18) takes precedence when within `melee.range`.
+---  If `def.shooter` is defined and `def.melee` is `nil`, melee defaults to disabled.
+---
+---### Usage Example:
+---```lua
+---shooter = {
+---    projectile = "x_mobs:spectrum_orb",
+---    range = 16.0,
+---    min_range = 4.0,
+---    retreat_speed = 1.2,
+---    velocity = 14.0,
+---    damage = 6,
+---    cooldown = 3.2,
+---    fire_duration = 0.8,
+---    fire_delay = 0.4,
+---    predict_aim = true,
+---    animation = "shoot",
+---    sound = "shoot",
+---    on_charge = function(self, pos)
+---        -- Spawn windup charging VFX
+---    end,
+---    on_shoot = function(self, proj_obj, dir, origin)
+---        -- Custom projectile setup
+---    end,
+---}
+---```
 ---@class ShooterConfigDef
----@field projectile? string Technical entity name of projectile (default: "x_mobs:archer_arrow")
+---@field projectile? string|false Technical entity name of projectile (default: "x_mobs:archer_arrow"; false disables)
 ---@field range? number Maximum firing range in nodes (default: def.attack_range or 15.0)
 ---@field min_range? number Minimum distance threshold under which mob retreats (default: 0.0)
 ---@field retreat_speed? number Speed when kiting / backing away from player (default: 1.0)
 ---@field shoot_while_retreating? boolean Whether mob can fire projectiles while kiting / backing away (default: true)
+---@field kiting? boolean Whether mob tactically retreats when inside min_range (default: true; false for hybrid mobs)
 ---@field cooldown? number Attack cooldown between shots in seconds (default: 2.0)
 ---@field fire_duration? number Duration mob holds shooting pose in seconds (default: 1.0)
 ---@field fire_delay? number Delay before projectile is released in seconds (default: 0.4)
 ---@field velocity? number Projectile flight speed in nodes/sec (default: 18.0)
----@field damage? number Projectile damage (default: 3)
+---@field damage? number Projectile damage (default: 3; passed to projectile or used by step handler)
 ---@field animation? string Animation track name played when shooting (default: "attack")
 ---@field sound? string Sound played when shooting (default: "shoot")
+---@field state? string Entity state set while shooting (default: "attacking")
 ---@field predict_aim? boolean Whether to apply aim lead prediction based on target velocity (default: false)
+---@field on_charge? fun(self: table, pos: Vector) Callback executed during firing windup / charge
+---Spawn callback (ignored if on_fire is set).
+---@field on_shoot? fun(self: table, proj_obj: ObjectRef, dir: Vector, origin: Vector)
+---Custom fire callback override (bypasses projectile spawn).
+---@field on_fire? fun(self: table, origin: Vector, dir: Vector, velocity: number, target_pos: Vector)
 
 ---@class ProjectileTargetOptions
 ---@field allow_players? boolean Whether players are valid targets (default: true)
@@ -59,9 +246,15 @@
 ---@field on_step? fun(self: table, dtime: number, pos: Vector) Callback executed on every unobstructed flight step
 
 ---@class CustomStateDef
----@field enter? fun(self: table) Called when state is entered
----@field step fun(self: table, dtime: number): string|nil State step tick; return state name to transition
----@field exit? fun(self: table) Called when state is exited
+---@field enter? fun(self: MobStateContext) Called when state is entered
+---@field step fun(self: MobStateContext, dtime: number): MobStateType|nil State tick; return state name to transition
+---@field exit? fun(self: MobStateContext) Called when state is exited
+
+---@class StateTransitionDef
+---@field from MobStateType|"*" Source state name or "*" for wildcard
+---@field to MobStateType Destination state name
+---@field condition fun(self: MobStateContext): boolean Condition predicate returning true to transition
+---@field on_transition? fun(self: MobStateContext) Optional callback executed during transition
 
 ---@class SoundConfigDef
 ---@field name string|string[] Technical sound name or list of sound variations
@@ -83,6 +276,9 @@
 ---@field random? string|SoundConfigDef Periodic ambient sound played during wander/idle
 ---@field attack? string|SoundConfigDef Sound played on melee or ranged strike
 ---@field alert? string|SoundConfigDef Sound played when a target is first acquired
+---@field shoot? string|SoundConfigDef Sound played when firing a ranged projectile
+---@field smash? string|SoundConfigDef Sound played on heavy ground smash impact
+---@field summon? string|SoundConfigDef Sound played when summoning minions or pack followers
 
 ---@class DamageEffectDef
 ---@field enabled? boolean Set to false to disable default core damage particles (default: true)
@@ -93,8 +289,10 @@
 ---@field scale? number Particle size multiplier (default: 1.0)
 ---@field texture? string Custom texture override (e.g. "[fill:3x3:#FF0000")
 
+---Declarative pack/faction rally configuration evaluated automatically by combat_handler on damage and death.
+---Unlike imperative broadcast_threat, swarm_alert also writes coordinate memory for obscured allies.
 ---@class SwarmAlertDef
----@field enabled? boolean Whether pack threat alerting is enabled
+---@field enabled? boolean Whether pack threat alerting is enabled (default: true)
 ---@field radius? number Search radius for alerting nearby pack allies (default: 24.0)
 ---@field max_allies? integer Maximum pack members rallied per threat alert (default: 8)
 
@@ -132,7 +330,6 @@
 ---@field max? integer Maximum count to drop (default: 1)
 ---@field chance? number Probability to drop between 0.0 and 1.0 (default: 1.0)
 
-
 ---@class DropOptions
 ---@field up_vel_min? number Minimum upward launch velocity (default: 4.6)
 ---@field up_vel_max? number Maximum upward launch velocity (default: 5.8)
@@ -141,79 +338,233 @@
 ---@field particles? boolean Enable sparkle/burst particles (default: true)
 ---@field trails? boolean Enable sparkling trail attached to flying items (default: true)
 ---@field particle_color? string Hex color for sparkle particles
+---@field particle_texture? string Optional custom base particle texture
 ---@field sound? string Sound identifier to play on drop
 ---@field killer? ObjectRef Killer object/player if applicable
 
+---Declarative health regeneration and tactical retreat configuration.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`can_flee = false`**: Disables fleeing entirely. The mob will fight to the death without running away,
+---  and all flee/channel attributes (`flee_threshold`, `flee_ratio`, `return_threshold`, `return_ratio`,
+---  `burst_duration`, `channel_duration`, `safe_distance`, `heal_amount`) are **ignored**.
+---- **`flee_threshold` vs `flee_ratio`**: `flee_threshold` (absolute HP integer) takes precedence.
+---  If `flee_threshold` is explicitly defined, `flee_ratio` is **ignored**.
+---- **`return_threshold` vs `return_ratio`**: `return_threshold` (absolute HP integer) takes precedence.
+---  If `return_threshold` is explicitly defined, `return_ratio` is **ignored**.
+---- **`unlimited_flee = true`**: Mob flees continuously without time limit while passively regenerating at `rate`.
+---  `burst_duration`, `channel_duration`, `safe_distance`, and `heal_amount` are **ignored**.
+---- **`passive = true`**: Regenerates `rate` HP/sec continuously during normal idle, walking, and combat states
+---  without requiring the mob to disengage or enter the vulnerable channeling state.
 ---@class HealthRegenDef
----@field rate? number HP regenerated per second while running away or passively (default: 0.5)
+---@field rate? number HP regenerated per second for passive regeneration or unlimited_flee (default: 0.5)
 ---@field enabled? boolean Whether health regeneration is enabled (default: true)
 ---@field overlay? boolean Whether visual texture overlay flashes on regeneration (default: true)
 ---@field overlay_color? string Custom texture modifier overlay string (default: "^[colorize:#FFFFFF60")
----@field passive? boolean Whether regeneration occurs passively at all times (default: false)
----@field flee_threshold? number Absolute HP threshold below which mob flees (default: nil / 25% max)
----@field flee_ratio? number HP ratio below which mob flees (default: 0.25)
----@field return_threshold? number Absolute HP threshold to exit fleeing and return to combat (default: nil / 60% max)
----@field return_ratio? number HP ratio to exit fleeing and return to combat (default: 0.60)
+---@field passive? boolean Whether regeneration occurs passively at all times while idle/walking (default: false)
+---@field can_flee? boolean Whether mob tactically flees when low HP (default: true; false for stand-and-fight)
+---@field flee_threshold? number Absolute HP threshold below which mob flees (takes precedence over flee_ratio)
+---@field flee_ratio? number HP ratio below which mob flees (default: 0.25; ignored if flee_threshold is set)
+---@field return_threshold? number Absolute HP threshold to exit fleeing/channeling (takes precedence over return_ratio)
+---HP ratio to exit fleeing/channeling and return to combat (default: 0.60; ignored if return_threshold is set).
+---@field return_ratio? number
+---Continuous sprint without burst timeout or channel halt (ignores burst/channel durations).
+---@field unlimited_flee? boolean
+---Seconds mob sprints in disengage burst (default: 3.5s; ignored if unlimited_flee is true).
+---@field burst_duration? number
+---Seconds mob channels heal once safe (default: 3.0s; ignored if unlimited_flee is true).
+---@field channel_duration? number
+---Safe distance to halt sprint and channel heal (default: 10.0m; ignored if unlimited_flee is true).
+---@field safe_distance? number
+---Flat HP restored when channel completes (default: return - flee threshold; ignored if unlimited_flee is true).
+---@field heal_amount? number
+---@field flee_speed? number Speed in m/s while fleeing (default: capped at 4.2 m/s for catchability, or def.flee_speed)
+---@field max_flee_distance? number Maximum retreat distance before halting or resting (default: 15.0)
 
+---@class MobImmunitiesDef
+---@field environment? boolean Immune to all ambient environmental hazard node DPS
+---@field damage_per_second? boolean Immune to node damage_per_second
+---@field lava? boolean Immune to lava damage
+---@field fire? boolean Immune to fire and igniter damage
+---@field drown? boolean Immune to water drowning
+---@field suffocation? boolean Immune to solid block asphyxiation
+
+---@class MobBoneDef
+---@field pivot? Vector|{x: number, y: number, z: number} Pivot offset for bone attachments and inverse kinematics
+---@field rotation? Vector|{x: number, y: number, z: number} Default bone orientation rotation
+---@field position? Vector|{x: number, y: number, z: number} Bone position offset
+
+---@class MobInitialPropertiesDef
+---@field hp_max? number Maximum health points (synced to ObjectRef properties and engine HP)
+---@field mesh? string 3D model mesh filename (.glb, .gltf, or .b3d)
+---@field textures? string[] List of texture filenames or texture modifier strings
+---@field visual? "mesh"|"cube"|"sprite" Visual rendering mode (default: "mesh" if mesh is specified)
+---@field visual_size? Vector2d|Vector|{x: number, y: number, z?: number} Visual model scale factors
+---@field collisionbox? number[] 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? table|number[] 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
+---@field physical? boolean Whether entity is subject to physical collisions (default: true)
+---@field collide_with_objects? boolean Whether entity collides with other entities and players (default: true)
+---@field stepheight? number Maximum step-up height in nodes (default: 1.1)
+---@field makes_footstep_sound? boolean Whether movement plays footstep audio (default: true unless floating)
+---@field automatic_rotate? number Continuous Y-axis rotation speed in radians/sec
+---@field backface_culling? boolean Whether backfaces of the 3D model are culled (default: true)
+---@field glow? integer Light emission level in dark environments 0..14 (default: 0)
+---@field nametag? string Overhead nametag text
+---@field nametag_color? string|table Nametag text color
+---@field nametag_bgcolor? string|table Nametag background color
+---@field infotext? string Tooltip text displayed when player points at the entity
+---@field static_save? boolean Whether entity persists in block static data across server restarts (default: true)
+---@field shaded? boolean Whether mesh is affected by world lighting (default: true)
+---@field show_on_minimap? boolean Whether entity appears on player minimap
+---@field eye_height? number Engine eye elevation in nodes
+---@field zoom_fov? number Camera zoom field of view in degrees
+---@field use_texture_alpha? boolean|string Texture alpha transparency mode (true, false, "clip", "blend", "opaque")
+---@field damage_texture_modifier? string Texture modifier applied when entity takes damage
+---@field pointable? boolean Whether entity can be pointed at or punched (default: true)
+
+---Complete mob entity registration specification, physical properties,
+---combat tuning, AI navigation, and lifecycle callback configuration.
+---
+---### Architecture & Attribute Precedence Rules:
+---- **`initial_properties.*` vs Top-Level Engine Object Properties**:
+---  Standard Luanti ObjectProperties (`mesh`, `textures`, `hp_max`, `collisionbox`, `selectionbox`,
+---  `visual_size`, `stepheight`, `glow`, `nametag`, `use_texture_alpha`, etc.) can be placed either inside
+---  `initial_properties` or directly at top-level. If specified in both, `initial_properties` takes precedence
+---  and the top-level duplicate is automatically migrated and stripped.
+---- **Combat Execution Pipeline Precedence**:
+---  1. `custom_step` (Priority 15): If defined and returns `true`, **intercepts** the combat pipeline,
+---     bypassing all declarative melee and shooter logic for that tick (used for spells, summoning, standoff).
+---  2. `melee` (Priority 18): Engages when target is within `melee.range`. Halts horizontal velocity, faces
+---     target, and returns `true`, intercepting and preventing `shooter` from firing.
+---  3. `shooter` (Priority 20): Engages when target is within `shooter.range` and outside `melee.range`.
+---     If target closes inside `shooter.min_range`, mob kites backwards (unless `kiting = false`).
+---- **Melee vs Shooter Default Behavior**:
+---  If `shooter` is defined and `melee` is omitted (`nil`), melee defaults to disabled (pure shooter).
+---  To create a hybrid mob that shoots at distance and fights with melee at close range, explicitly provide
+---  both `shooter = { ... }` and `melee = { range = ..., ... }`.
+---- **Locomotion Archetypes**:
+---  - `is_floating = true`: Zero-gravity flight locomotion. Overrides terrestrial walking; sets
+---    `props.makes_footstep_sound` to `false` by default. Terrestrial climbing/stepping/crawling are ignored.
+---  - `is_aquatic = true`: 3D underwater liquid locomotion. On land, mob will suffocate after `air_grace_period`
+---    unless `amphibious = true` or `can_breathe = true`.
+---  - `amphibious = true`: Immune to both water drowning and beach land suffocation.
+---- **Swarm and Shoal Multi-Agent Coordination**:
+---  Enabling `swarm` or `shoal` automatically sets `collide_with_objects = false` by default to prevent
+---  clustered entities from pushing each other into physics glitches.
+---- **Hazard Immunities**:
+---  The `immunities = { ... }` table is the single source of truth. Setting `immunities` supersedes legacy flat
+---  flags (`immune_to_lava`, `immune_to_fire`, `immune_to`).
 ---@class MobRegistrationDef
----@field textures? string|string[]|(string[])[] Texture or variations list (preferred in initial_properties)
----@field initial_properties table Luanti ObjectRef properties (hp_max, collisionbox, mesh, visual_size, textures, etc.)
----@field collisionbox? number[] Optional 6-element collision box: {minx, miny, minz, maxx, maxy, maxz}
----@field selectionbox? table|number[] Optional selection box: {minx, miny, minz, maxx, maxy, maxz}
----@field armor_groups? table<string, number> Luanti armor groups (e.g. {fleshy = 80})
----@field knockback_mult? number Knockback impulse multiplier (0 for unyielding/immune, default: 1.5)
----@field faction? string|string[] Faction tag or list of faction tags (default: "monsters")
----@field factions? string|string[] Alias for faction
----@field friendly_fire? boolean Whether allies/same-faction can damage this mob (default: false)
-
----@field walk_speed? number Base walking speed (default: 2.5)
----@field pursuit_speed? number Pursuit running speed (default: 3.5)
----@field wander_speed? number Wandering patrol speed (default: 1.5)
----@field flee_speed? number Fleeing speed when low on health (default: 4.0)
----@field health_regen? number|boolean|HealthRegenDef Health regeneration rate, disable toggle, or configuration table
----@field on_regen_step? fun(self: table, hp_added: number) Optional callback executed on health regeneration tick
----@field on_return_to_fight? fun(self: table) Optional callback executed when mob recovers HP and exits fleeing
+---@field name? string Technical entity name (e.g. "x_mobs:spider", "mymod:golem")
+---@field initial_properties? MobInitialPropertiesDef|table Luanti ObjectRef properties table (hp, mesh, boxes, etc.)
+---@field textures? string|string[]|(string[])[] Texture filename, list of textures, or phenotype variations
+---@field mesh? string 3D model mesh filename (.glb, .gltf, or .b3d)
+---@field visual? "mesh"|"cube"|"sprite" Visual rendering mode (default: "mesh" if mesh is specified)
+---@field visual_size? Vector2d|Vector|{x: number, y: number, z?: number} Visual model scale factors
+---@field hp_max? number Maximum health points (synced to ObjectRef properties and engine HP, default: 20)
+---@field collisionbox? number[] 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? table|number[] 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
+---@field physical? boolean Whether entity is subject to physical collisions (default: true)
+---@field collide_with_objects? boolean Whether entity collides with other entities and players (default: true)
+---@field stepheight? number Maximum step-up height in nodes (default: 1.1)
+---@field makes_footstep_sound? boolean Whether walking plays footstep audio (default: true unless floating)
+---@field automatic_rotate? number Continuous Y-axis rotation speed in radians/sec
+---@field backface_culling? boolean Whether backfaces of the 3D model are culled (default: true)
+---@field glow? integer Light emission level in dark environments 0..14 (default: 0)
+---@field nametag? string Overhead nametag text
+---@field nametag_color? string|table Overhead nametag text color
+---@field nametag_bgcolor? string|table Overhead nametag background color
+---@field infotext? string Tooltip text displayed when player points at the entity
+---@field static_save? boolean Whether entity persists in block static data across server restarts (default: true)
+---@field shaded? boolean Whether mesh is shaded by world lighting (default: true)
+---@field show_on_minimap? boolean Whether entity icon appears on player minimap
+---@field eye_height? number Engine eye elevation in nodes
+---@field zoom_fov? number Camera zoom field of view in degrees
+---@field use_texture_alpha? boolean|string Texture alpha transparency mode (true, false, "clip", "blend", "opaque")
+---@field damage_texture_modifier? string Engine texture modifier applied when entity takes damage
+---@field pointable? boolean Whether entity can be pointed at or punched (default: true)
+---@field mob_height? number Height in nodes (derived from collisionbox if omitted)
+---@field eye_offset? number Eye level offset in nodes (default: collisionbox top * 0.85)
+---@field half_width? number Collision half-width for lateral obstacle clearance (default: 0.4)
+---@field walk_speed? number Base walking speed in nodes/sec (default: 2.5)
+---@field pursuit_speed? number Running pursuit speed in nodes/sec (default: walk_speed * 1.4)
+---@field wander_speed? number Wandering patrol speed in nodes/sec (default: walk_speed * 0.6)
+---@field flee_speed? number Tactical fleeing speed when low on health (default: walk_speed * 1.6)
+---@field max_angular_speed? number Maximum turning rotation speed in radians/sec (default: 4.0)
+---@field hover_offset? number Desired hovering elevation above ground for floating mobs in nodes (default: 0.4)
+---@field flight_elevation? number Desired cruising elevation above ground/player in nodes (default: 1.85)
+---@field combat_hover_offset? number Desired hovering elevation above ground during combat in nodes (default: 0.35)
+---@field combat_standoff? number Desired horizontal standoff distance in front of target in combat (default: 1.4)
 ---@field can_wander? boolean Whether entity wanders when idle (default: true)
----@field wander_radius? number Maximum wandering patrol radius (default: 10.0)
----@field can_swim? boolean Whether entity navigates water (default: true)
----@field can_climb? boolean Whether entity climbs ladders and vines (default: false)
----@field can_open_doors? boolean Whether entity opens doors (default: false)
----@field can_crawl? boolean Whether entity navigates 1-block crawlways (default: false)
----@field is_floating? boolean Whether entity hovers in mid-air (default: false)
----@field hover_offset? number Desired hovering height above ground in nodes (default: 1.5)
----@field aggro_radius? number Detection range in nodes (default: 20.0)
----@field attack_range? number Attack reach in nodes (default: 2.5)
----@field damage? number Base melee damage (default: 4)
+---@field wander_radius? number Maximum wandering patrol radius in nodes (default: 10.0)
+---@field can_swim? boolean Whether entity navigates liquid bodies (default: true)
+---@field can_climb? boolean Whether entity climbs ladders, vines, and walls (default: false)
+---@field can_open_doors? boolean Whether entity opens wooden doors in its path (default: false)
+---@field can_crawl? boolean Whether entity navigates 1-block crawlways and ceilings (default: false)
+---@field is_floating? boolean Whether entity hovers in mid-air with zero-gravity locomotion (default: false)
+---@field is_aquatic? boolean Whether entity is strictly aquatic (swims in water, suffocates on land)
+---@field type? "terrestrial"|"aquatic"|"flying"|string Locomotion archetype classifier
+---@field mob_type? "aquatic"|"monster"|"animal"|string Alternative entity category classifier
+---@field can_breathe? boolean Whether entity breathes air (false for aquatic mobs)
+---@field can_fly_in_water? boolean Whether aquatic mob flies/glides in water
+---@field abilities? table Optional explicit abilities configuration table overrides
+---@field auto_scan? boolean Whether mob automatically scans for nearby player targets (default: true)
+---@field aggro_radius? number Player and target detection range in nodes (default: 16.0)
+---@field attack_range? number Melee attack reach in nodes (default: 2.0)
+---@field damage? number Base melee strike damage dealt to targets (default: 4)
 ---@field attack_interval? number Cooldown between attacks in seconds (default: 1.2)
----@field scan_interval? number Frequency of target scanning in seconds (default: 0.5)
----@field death_duration? number Duration before entity removal on death in seconds
----@field swarm_alert? SwarmAlertDef Pack rally configuration on threat detection
-
----@field animations? table<string, MobAnimationDef|string> Declarative glTF animations map
+---@field scan_interval? number Frequency of target scanning in seconds (default: 0.4)
+---@field armor_groups? table<string, number> Luanti armor groups (e.g. {fleshy = 80, cracky = 70})
+---@field knockback_mult? number Knockback impulse multiplier (0 for unyielding/immune, default: 1.5)
+---@field can_flinch? boolean|fun(self: table): boolean Whether mob flinches on punch (default: true)
+---@field factions? string|string[] Faction tag or list of faction tags (default: "monsters")
+---@field friendly_fire? boolean Whether allies/same-faction can damage this mob (default: false)
+---@field cooldowns? table<string, number> Initial named cooldown timers in seconds (decremented per tick)
+---@field health_regen? number|boolean|HealthRegenDef Health regen rate, disable toggle, or config table
+---@field on_regen_step? fun(self: table, hp_added: number) Optional callback executed on each health regeneration step
+---@field on_return_to_fight? fun(self: table) Optional callback executed when mob recovers HP and exits fleeing
+---@field immunities? MobImmunitiesDef Environmental hazard immunities table
+---@field can_breathe_water? boolean Whether terrestrial mob can breathe underwater without drowning
+---@field amphibious? boolean Whether mob is amphibious (immune to both drowning and beach suffocation)
+---@field breath_max? number Breath holding duration in seconds before drowning begins (default: 15.0)
+---@field drowning_dps? number Damage per second when drowning underwater (default: 2)
+---@field air_grace_period? number Seconds before beached aquatic mob suffocates on land (default: 5.0)
+---@field suffocation_dps? number Damage per second when beached out of water (default: 4)
+---@field block_suffocation_dps? number Damage per second when head is buried inside solid block (default: 2)
+---@field death_duration? number Duration before entity removal on death in seconds (default: 1.5)
+---@field despawn? boolean Enables or disables distance despawning (default: true)
+---@field despawn_timer? number Sustained duration in seconds far from players before despawning (default: 45.0)
+---@field despawn_in_daylight? boolean Despawns mob in daytime sunlight without drops (default: false)
+---@field despawn_natural_light? integer Minimum natural sunlight level to trigger daylight despawn (default: 11)
+---@field despawn_conditions? DespawnConditionsDef Granular despawn triggers (daylight, time-of-day ranges)
+---@field animations? table<string, MobAnimationDef|string> Declarative glTF skeletal animations map
+---@field bones? table<string, MobBoneDef> Bone attachment pivots and structural metadata map
 ---@field pack? MobPackDef Pack and squad coordination options
 ---@field swarm? SwarmConfigDef Swarm intelligence, 3D flocking, and vortex combat configuration
 ---@field shoal? ShoalConfigDef Fish schooling, 3D boundary avoidance, and anchor steering configuration
----@field shooter? ShooterConfigDef Ranged combat and kiting configuration
+---@field melee? boolean|MeleeConfigDef Declarative melee combat configuration (false disables)
+---@field shooter? ShooterConfigDef Ranged combat, projectile firing, and kiting configuration
 ---@field sounds? string|MobSoundDef Acoustic sound feedback configuration
----@field damage_effect? DamageEffectDef|string|boolean Hit particle feedback (false/"none" disables)
+---@field damage_effect? DamageEffectDef|string|boolean Directional hit particle feedback (false or "none" disables)
 ---@field health_bar? MobHealthBarConfig|boolean Overhead combat health bar configuration (false disables)
 ---@field drops? (DropEntryDef|string)[] Declarative loot drop table spawned on defeat
----@field drop_options? DropOptions Physics, particle, and sound overrides for mob drops
----@field custom_states? table<string, CustomStateDef> Custom state machine states
+---@field drop_options? DropOptions Physics, launch arc, particle trail, and sound overrides for mob drops
+---@field swarm_alert? boolean|SwarmAlertDef Declarative pack & faction rally configuration on damage and death
+---@field custom_states? table<string, CustomStateDef> Custom state machine states map
+---@field transitions? StateTransitionDef[] Declarative state transition rules
 ---@field hooks? table<string, fun(self: table, ...)> Lifecycle hook callbacks
----@field despawn? boolean Enables or disables distance despawning (default: true)
----@field despawn_timer? number Duration in seconds entity remains far from players before despawning (default: 45.0)
----@field despawn_in_daylight? boolean Despawns mob in daytime sun without drops (default: false)
----@field despawn_natural_light? integer Minimum natural light level to trigger daylight despawn (default: 11)
----@field despawn_conditions? DespawnConditionsDef Granular despawn triggers (daylight, time-of-day ranges)
----@field on_despawn? fun(self: table, reason?: string) Callback when entity despawns gracefully
----@field on_activate? fun(self: table, staticdata: string, dtime_s: number) Called when entity activates in world
----@field on_step? fun(self: table, dtime: number, moveresult: table) Callback on each physics/logic step
+---@field custom_step? CustomStepHandler Pre-combat custom ability hook (return true to intercept)
+---@field on_activate? fun(self: table, staticdata: table|string, dtime_s: number, raw?: string) Called on activation
+---@field on_step? fun(self: table, dtime: number, moveresult?: table) Callback on each physics/logic step
 ---@field on_punch? fun(self: table, puncher: ObjectRef, tflp: number, tool_caps: table, dir: Vector, damage: number)
----@field on_hurt? fun(self: table, puncher: ObjectRef, damage: number) Callback invoked when entity takes damage
----@field on_death? fun(self: table, killer: ObjectRef) Callback invoked when entity dies
----@field on_rightclick? fun(self: table, clicker: ObjectRef) Callback invoked when entity is right-clicked
----@field get_staticdata? fun(self: table): string Callback returning serialized state string for persistence
+---@field on_hurt? fun(self: table, puncher: ObjectRef|nil, damage: number) Callback invoked on taking damage
+---@field on_death? fun(self: table, killer: ObjectRef|nil) Callback invoked when entity dies
+---@field on_rightclick? fun(self: table, clicker: ObjectRef): any Callback invoked when entity is right-clicked
+---@field on_deactivate? fun(self: table, removal: boolean) Called when entity is unloaded or removed
+---@field on_despawn? fun(self: table, reason?: string) Callback when entity despawns gracefully
+---@field get_staticdata? fun(self: table): string|table Callback returning serialized state for persistence
+---@field perform_attack? fun(self: table, target: ObjectRef, dir: Vector) Custom melee attack callback
+---@field on_action_end? fun(self: table) Callback executed when action_timer completes
 
 ---@class DespawnConditionsDef
 ---@field daylight? boolean Despawn when exposed to daytime sunlight (default: false)
@@ -278,21 +629,39 @@
 ---@field min_elevation? number Minimum Y coordinate (default: -31000)
 ---@field max_elevation? number Maximum Y coordinate (default: 31000)
 ---@field mob_name? string Optional entity technical name override
+---@field _parsed_nodes? table<string, boolean> Pre-parsed fast-lookup map of allowed node names
+---@field _parsed_groups? table<string, boolean> Pre-parsed fast-lookup map of allowed node group names
+---@field _parsed_biomes? table<string, boolean> Pre-parsed fast-lookup map of allowed biome names
+---@field _parsed_exclude_nodes? table<string, boolean> Pre-parsed fast-lookup map of excluded node names
+---@field _parsed_exclude_groups? table<string, boolean> Pre-parsed fast-lookup map of excluded node group names
 
 ---@class SpawnDefinition : SpawnConfig
 ---@field mob_name? string Entity technical name (e.g. "x_mobs:spider")
 
----@alias PathfindingCallback fun(path: Vector[]|nil) Callback invoked when asynchronous path search completes
---- Standard pub-sub event names emitted by x_mob_core:
---- - "on_mob_spawn": (mob: table, is_fresh: boolean)
---- - "on_mob_death": (mob: table, puncher: ObjectRef|nil)
---- - "on_mob_despawn": (mob: table)
---- - "on_mob_hurt": (mob: table, puncher: ObjectRef|nil, dmg: number)
---- - "on_mob_target": (mob: table, target: ObjectRef|nil, old_target: ObjectRef|nil)
---- - "on_mob_rightclick": (mob: table, clicker: ObjectRef|nil, itemstack: ItemStack|nil)
+---Callback function invoked when an asynchronous A* path search completes.
+---Receives an array of solved 3D waypoint vectors on success, or `nil` if unreachable.
+---@alias PathfindingCallback fun(path: Vector[]|nil)
+
+---Standard pub-sub event names emitted across mob lifecycles on the x_mob_core event bus.
 ---@alias CoreEventName "on_mob_spawn"|"on_mob_death"|"on_mob_despawn"
 ---| "on_mob_hurt"|"on_mob_target"|"on_mob_rightclick"|string
----@alias EventListenerCallback fun(...: any) Callback function invoked when a pub-sub event is emitted
+
+---Callback function invoked when a pub-sub event is emitted on the event bus.
+---@alias EventListenerCallback fun(...: any)
+
+---Pre-combat custom ability interception hook handler.
+---Executed at Priority 15 in the middleware pipeline prior to declarative melee and shooter logic.
+---Return `true` to halt the pipeline (e.g. while casting spells, summoning minions, in tactical standoff).
+---Return `false` or `nil` to fall through into standard declarative melee and ranged attacks.
+---@alias CustomStepHandler fun(self: table, dtime: number, moveresult?: table, def?: table): boolean|nil
+
+---Step hook callback invoked on every server step for living mob entities.
+---
+---Return values:
+---- Return `true` to **intercept** step handling: cancels subsequent pipeline hooks
+---  from firing on this tick, and bypasses default pursuit and wandering locomotion.
+---- Return `false` or `nil` to allow subsequent pipeline hooks and normal mob locomotion to proceed.
+---@alias StepHookHandler fun(self: table, dtime: number, def: table, moveresult?: table): boolean|nil
 
 local types = {}
 return types

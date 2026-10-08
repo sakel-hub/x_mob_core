@@ -30,7 +30,7 @@ function environment.step(self, dtime, def, combat_handler)
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
 	if not pos then return false end
 
-	local immunities = def.immunities or def.immune_to or {}
+	local immunities = def.immunities or {}
 	local cbox = self.collisionbox or def.collisionbox or {-0.4, -0.4, -0.4, 0.4, 0.4, 0.4}
 	local foot_y = pos.y + cbox[2] + 0.1
 	local torso_y = pos.y + (cbox[2] + cbox[5]) * 0.5
@@ -74,10 +74,10 @@ function environment.step(self, dtime, def, combat_handler)
 		local is_fire_faction = self.factions and (self.factions.fire or self.factions.fire_elemental)
 		local is_nether_faction = self.factions and (self.factions.lava or self.factions.nether)
 
-		if found_lava and (immunities.lava or immunities.fire or self.immune_to_lava or
+		if found_lava and (immunities.lava or immunities.fire or
 			is_fire_faction or is_nether_faction) then
 			immune = true
-		elseif found_fire and (immunities.fire or self.immune_to_fire or is_fire_faction) then
+		elseif found_fire and (immunities.fire or is_fire_faction) then
 			immune = true
 		end
 
@@ -89,7 +89,7 @@ function environment.step(self, dtime, def, combat_handler)
 	end
 
 	-- 2. Aquatic vs Terrestrial Inversion (Beaching vs Drowning)
-	local is_aquatic = (def.shoal ~= nil) or def.aquatic or def.is_aquatic or (def.type == "aquatic")
+	local is_aquatic = (def.is_aquatic == true) or (def.shoal ~= nil) or (def.type == "aquatic")
 	if is_aquatic then
 		-- Aquatic mob (fish): suffocates when beached out of water
 		scratch_probe.x = pos.x
@@ -114,7 +114,7 @@ function environment.step(self, dtime, def, combat_handler)
 		scratch_probe.z = pos.z
 		local head_in_water = utils.is_water_node(scratch_probe)
 		local can_drown = not (
-			immunities.drown or immunities.water or def.can_breathe_water or def.amphibious or
+			immunities.drown or def.can_breathe_water or def.amphibious or
 			(self.factions and (self.factions.undead or self.factions.aquatic or self.factions.golem))
 		)
 
@@ -142,7 +142,7 @@ function environment.step(self, dtime, def, combat_handler)
 	local head_node = core.get_node(scratch_probe)
 	local head_def = core.registered_nodes[head_node.name]
 	if head_def and head_def.walkable and head_def.drawtype == "normal" and
-		not (immunities.suffocation or immunities.block_suffocation) then
+		not immunities.suffocation then
 		local suffocation_rate = def.block_suffocation_dps or 2
 		total_dmg = total_dmg + math.max(1, math.floor(suffocation_rate * elapsed + 0.5))
 		hazard_type = hazard_type or "suffocation"

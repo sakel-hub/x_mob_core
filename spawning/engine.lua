@@ -39,7 +39,7 @@ local function spawn_mob_group(spawn_pos, def, source)
 	local spawned = 0
 
 	local mdef = x_mob_core.registered_mobs[def.mob_name]
-	local is_aquatic = def.aquatic or def.is_aquatic or (mdef and (mdef.shoal or mdef.is_aquatic))
+	local is_aquatic = def.is_aquatic or (mdef and (mdef.shoal or mdef.is_aquatic))
 	local base_spawn_pos = spawn_pos
 	if is_aquatic then
 		local under_node = core.get_node({x = spawn_pos.x, y = spawn_pos.y - 1, z = spawn_pos.z})

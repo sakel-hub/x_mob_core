@@ -19,3 +19,10 @@ x_mob_core_health_bar_timeout (Mob Health Bar Timeout) float 4.0 1.0 30.0
 
 # Automatically remove inactive health bar child entities on timeout instead of keeping hidden
 x_mob_core_health_bar_auto_remove (Auto-remove Inactive Health Bar Entities) bool true
+
+# Enable responsive fullscreen HUD status screen vignettes (e.g. spores, void miasma)
+x_mob_core_enable_hud_vignettes (Enable HUD Status Vignettes) bool true
+
+# Prominence and opacity scaling multiplier for HUD status screen vignettes (0.5 to 2.5)
+# Increase for higher contrast and visibility during bright daylight conditions.
+x_mob_core_hud_vignette_opacity_multiplier (HUD Vignette Prominence Multiplier) float 1.0 0.5 2.5

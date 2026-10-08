@@ -71,7 +71,7 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 		combat_handler.apply_death_settling_physics(self)
 	end
 
-	animator.play(self.object, "die", {speed = 1.0, loop = false, force = true, priority = 10})
+	animator.play(self.object, "death", {speed = 1.0, loop = false, force = true, priority = 10})
 	sound.play(self, "death")
 
 	-- Store killer reference so followers can inherit target and drops spawn after death
@@ -86,9 +86,22 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 		end
 	end
 
-	local is_pack_threat = (def.swarm and def.swarm.enabled ~= false) or (def.shoal and def.shoal.enabled ~= false)
+	local swarm_cfg = def.swarm_alert or (def.pack and def.pack.swarm_alert) or self.swarm_alert
+	local has_swarm_alert = swarm_cfg == true or (type(swarm_cfg) == "table" and swarm_cfg.enabled ~= false)
+	local is_pack_threat = (def.pack and def.pack.role == "leader") or
+		(def.swarm and def.swarm.enabled ~= false) or
+		(def.shoal and def.shoal.enabled ~= false) or
+		has_swarm_alert
 	if is_pack_threat and puncher and utils.is_player_alive(puncher) then
-		coordination.broadcast_threat(self, puncher, 24.0, 8)
+		local rad = (type(swarm_cfg) == "table" and swarm_cfg.radius) or 24.0
+		local max_cnt = (type(swarm_cfg) == "table" and swarm_cfg.max_allies) or 8
+		coordination.broadcast_threat(self, puncher, rad, max_cnt)
+		if has_swarm_alert then
+			local ppos = puncher:get_pos()
+			if ppos then
+				mob_memory.broadcast_alert(self, ppos, dmg or 5.0, rad, max_cnt)
+			end
+		end
 	end
 
 	if def.on_death then
@@ -143,8 +156,21 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 			mob_memory.record_target_sighting(self, puncher, ppos)
 			mob_memory.record_fight_pos(self, ppos, 45.0)
 			mob_memory.clear_unreachable_target(self, puncher)
+
+			local swarm_cfg = def.swarm_alert or (def.pack and def.pack.swarm_alert) or self.swarm_alert
+			local has_swarm_alert = swarm_cfg == true or (type(swarm_cfg) == "table" and swarm_cfg.enabled ~= false)
+			local rad = (type(swarm_cfg) == "table" and swarm_cfg.radius) or 20.0
+			local max_cnt = (type(swarm_cfg) == "table" and swarm_cfg.max_allies) or 6
+
+			if has_swarm_alert then
+				coordination.broadcast_threat(self, puncher, rad, max_cnt)
+				mob_memory.broadcast_alert(self, ppos, dmg, rad, max_cnt)
+			end
+
 			if def.pack and def.pack.role == "leader" then
-				coordination.broadcast_threat(self, puncher, 16.0, 4)
+				if not has_swarm_alert then
+					coordination.broadcast_threat(self, puncher, 16.0, 4)
+				end
 				coordination.rally_followers(self, puncher)
 			elseif def.pack and def.pack.role == "member" then
 				local leader = self.leader_obj
@@ -155,9 +181,9 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 					end
 				end
 			elseif (def.swarm and def.swarm.enabled ~= false) or (def.shoal and def.shoal.enabled ~= false) then
-				coordination.broadcast_threat(self, puncher, 24.0, 8)
-			elseif self.swarm_alert and self.swarm_alert.enabled then
-				mob_memory.broadcast_alert(self, ppos, dmg, self.swarm_alert.radius, self.swarm_alert.max_allies)
+				if not has_swarm_alert then
+					coordination.broadcast_threat(self, puncher, 24.0, 8)
+				end
 			end
 		end
 	end
@@ -191,6 +217,26 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 	if kb > 0 and dir and self.object then
 		self.object:add_velocity({x = dir.x * kb, y = math.min(1.8, 0.5 * kb), z = dir.z * kb})
 		self._knockback_timer = 0.4
+	end
+
+	-- Hit-interrupt for Tactical Disengage & Channeling
+	-- Striking a mob while fleeing or channeling cancels retreat into an immediate Last Stand
+	local hr = def and def.health_regen
+	local is_retreating = self.state == "channeling" or self.state == "fleeing" or
+		(self.memory and self.memory.flee_state)
+	if is_retreating then
+		self._flee_standoff = nil
+	end
+	if hr and not hr.unlimited_flee and is_retreating then
+		self._flee_used = true
+		self._flee_burst_timer = nil
+		self._flee_channel_timer = nil
+		self.panic_timer = nil
+		if self.memory then
+			self.memory.flee_state = false
+			self.memory.flee_hp_lock = nil
+		end
+		self.state = "combat"
 	end
 
 	-- Flinch hurt animation (unless in uninterruptible state or overridden)

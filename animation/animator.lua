@@ -25,19 +25,13 @@ function animator.play(obj, track_name, params)
 
 	local target_track = track_name
 	local anim_def = nil
-	if luaentity and luaentity.animations then
-		anim_def = luaentity.animations[track_name]
-		if not anim_def then
-			if track_name == "death" then
-				anim_def = luaentity.animations["die"]
-			elseif track_name == "die" then
-				anim_def = luaentity.animations["death"]
-			elseif track_name == "idle" then
-				anim_def = luaentity.animations["stand"]
-			elseif track_name == "stand" then
-				anim_def = luaentity.animations["idle"]
-			end
-		end
+	local anims = luaentity and (luaentity.animations or (luaentity._def and luaentity._def.animations))
+	if not anims and luaentity and luaentity.name then
+		local reg = x_mob_core.registered_mobs[luaentity.name]
+		anims = reg and reg.animations
+	end
+	if anims then
+		anim_def = anims[track_name]
 	end
 
 	if type(anim_def) == "table" and anim_def.track then
@@ -50,14 +44,6 @@ function animator.play(obj, track_name, params)
 		end
 	elseif type(anim_def) == "string" then
 		target_track = anim_def
-	elseif not anim_def then
-		if target_track == "idle" then
-			target_track = "stand"
-		elseif target_track == "stand" then
-			target_track = "idle"
-		elseif target_track == "death" then
-			target_track = "die"
-		end
 	end
 
 	if luaentity and prev_track == target_track and loop and not force then
@@ -99,19 +85,13 @@ function animator.stop(obj, track_name)
 	if not obj or not obj:is_valid() then return end
 	local luaentity = obj:get_luaentity()
 	local target_track = track_name
-	if track_name and luaentity and luaentity.animations then
-		local def = luaentity.animations[track_name]
-		if not def then
-			if track_name == "death" then
-				def = luaentity.animations["die"]
-			elseif track_name == "die" then
-				def = luaentity.animations["death"]
-			elseif track_name == "idle" then
-				def = luaentity.animations["stand"]
-			elseif track_name == "stand" then
-				def = luaentity.animations["idle"]
-			end
-		end
+	local anims = luaentity and (luaentity.animations or (luaentity._def and luaentity._def.animations))
+	if not anims and luaentity and luaentity.name then
+		local reg = x_mob_core.registered_mobs[luaentity.name]
+		anims = reg and reg.animations
+	end
+	if track_name and anims then
+		local def = anims[track_name]
 		if type(def) == "table" and def.track then
 			target_track = def.track
 		elseif type(def) == "string" then

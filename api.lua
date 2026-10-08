@@ -71,9 +71,15 @@ x_mob_core.combat = {
 	effects = dofile(modpath .. "/combat/effects.lua"),
 	detachment = dofile(modpath .. "/combat/detachment.lua"),
 	loot = dofile(modpath .. "/combat/loot.lua"),
+	melee = dofile(modpath .. "/combat/melee.lua"),
 	shooter = dofile(modpath .. "/combat/shooter.lua"),
 	factions = dofile(modpath .. "/combat/factions.lua"),
 	health_bar = dofile(modpath .. "/combat/health_bar.lua"),
+	particles = dofile(modpath .. "/combat/particles.lua"),
+	envelop = dofile(modpath .. "/combat/envelop.lua"),
+	hunger_adapter = dofile(modpath .. "/combat/hunger_adapter.lua"),
+	hud_effects = dofile(modpath .. "/combat/hud_effects.lua"),
+	status_effects = dofile(modpath .. "/combat/status_effects.lua"),
 }
 
 -- Spawner Engine
@@ -121,8 +127,8 @@ function x_mob_core.register_mob(name, def)
 end
 
 ---Transitions an entity to a new state machine state, invoking exit and enter hooks.
----@param self table Mob instance
----@param new_state string Target state name
+---@param self MobStateContext Mob instance context table
+---@param new_state MobStateType Target state name
 function x_mob_core.transition_to(self, new_state)
 	return x_mob_core.lifecycle.state_machine.transition_to(self, new_state)
 end
@@ -135,15 +141,45 @@ function x_mob_core.set_armor_groups(self, groups)
 end
 
 ---Registers an extensible step middleware hook into the mob execution pipeline.
----@param name string Unique hook identifier
----@param priority integer Execution order (lower runs first)
----@param handler fun(self: table, dtime: number, def: table, moveresult?: table): boolean|nil
+---Allows 3rd-party mods and core subsystems to inject custom step logic without
+---modifying core engine loops or overriding mob `on_step` callbacks (Open/Closed Principle).
+---
+---### Lifecycle & Execution Order
+---Step hooks execute sequentially on every server tick for all living `x_mob_core` entities
+---during `on_step`, after core lifecycle routines (death countdown, buoyancy, timers, target validation)
+---and custom state machines have run, but before fallback idle wandering or target pursuit.
+---
+---Hooks are evaluated in ascending order of `priority` (lower numerical values run first).
+---
+---### Early Return & Interception
+---The return value of `handler` controls execution flow:
+---- Return `true`: **Intercepts** the step. Halts subsequent pipeline hooks from firing on this tick,
+---  and bypasses default idle wandering (`step_wander_or_idle`) and target pursuit (`step_move_or_idle`).
+---  Ideal for crowd control effects (stun, freeze, sleep, fear, paralysis).
+---- Return `false` or `nil`: Continues to the next hook in the pipeline and allows normal locomotion.
+---
+---### Priority Schedule & Reference Table
+---| Priority | Subsystem / Recommended Usage | Description |
+---|:---|:---|:---|
+---| `< 15` | Crowd Control / Status Effects | Stuns, freezes, sleep. Returning `true` halts attacks & movement. |
+---| `15` | Built-in `"custom_step"` | Pre-combat custom ability hook (spells, summons, tactical standoff). |
+---| `18` | Built-in `"melee"` | Internal melee attack range validation and strikes. |
+---| `20` | Built-in `"shooter"` | Internal projectile attack aiming and shooting. |
+---| `25` | Built-in `"environment"` | Internal hazard checks (lava, fire, drowning, suffocation). |
+---| `30` | Built-in `"pack_cluster"` | Internal pack and squad cluster spawning trigger. |
+---| `40` | Built-in `"swarm_nav"` | Internal 3D aerial Boids swarm navigation and dive-bombing. |
+---| `42` | Built-in `"shoal_nav"` | Internal aquatic schooling navigation and anchor steering. |
+---| `50+` | Post-Combat / Passives | Periodic damage ticks, status aura updates, dynamic buffs, telemetry. |
+---
+---@param name string Unique hook identifier (namespaced, e.g. "mymod:freeze_aura")
+---@param priority integer Execution order (lower runs first; see priority schedule)
+---@param handler StepHookHandler Callback function. Return `true` to intercept, or `false`/`nil` to continue.
 function x_mob_core.register_step_hook(name, priority, handler)
 	return x_mob_core.lifecycle.entity_wrapper.pipeline.register_step_hook(name, priority, handler)
 end
 
----Unregisters a previously registered step middleware hook.
----@param name string
+---Unregisters a previously registered step middleware hook by unique identifier name.
+---@param name string Unique hook identifier to remove (e.g. "mymod:freeze_aura")
 function x_mob_core.unregister_step_hook(name)
 	return x_mob_core.lifecycle.entity_wrapper.pipeline.unregister_step_hook(name)
 end
@@ -373,6 +409,39 @@ function x_mob_core.is_projectile(ent)
 	return x_mob_core.combat.shooter.is_projectile(ent)
 end
 
+---Advances declarative melee combat for an entity during its step tick.
+---Validates attack range, raycast line-of-sight, halts horizontal velocity, turns mob to face target,
+---plays attack animation and sound, and schedules delayed punch execution with reach tolerance.
+---@param self table Mob entity instance
+---@param dtime number Step delta time
+---@param def table Entity definition table containing melee configuration
+---@return boolean handled True if melee logic handled combat, halting movement
+function x_mob_core.step_melee(self, dtime, def)
+	return x_mob_core.combat.melee.step(self, dtime, def)
+end
+
+---Executes an instantaneous melee strike against a target entity.
+---Applies fleshy punch damage and triggers the configured on_strike callback or custom perform_attack override.
+---@param self table Mob entity instance
+---@param target ObjectRef Target entity to punch
+---@param dir Vector Strike impulse direction vector
+---@param def? table Mob definition table
+---@param m_cfg? MeleeConfigDef Melee configuration table override
+function x_mob_core.perform_melee_attack(self, target, dir, def, m_cfg)
+	return x_mob_core.combat.melee.perform_attack(self, target, dir, def or self._def or {}, m_cfg)
+end
+
+---Advances declarative ranged combat (shooter) for an entity during its step tick.
+---Validates range distance, raycast line-of-sight, performs tactical kiting if target enters min_range,
+---dispatches charge windup callbacks, calculates aim lead trajectory, and spawns projectile entities.
+---@param self table Mob entity instance
+---@param dtime number Step delta time
+---@param def table Entity definition table containing shooter configuration
+---@return boolean handled True if shooter logic handled combat, halting or kiting movement
+function x_mob_core.step_shooter(self, dtime, def)
+	return x_mob_core.combat.shooter.step(self, dtime, def)
+end
+
 -- Loot & Item Drops
 
 ---Spawns a single item with a physical parabolic launch arc.
@@ -425,6 +494,148 @@ function x_mob_core.update_health_bar(self)
 	return x_mob_core.show_health_bar(self)
 end
 
+-- Envelop & Status Visual Subsystem
+
+---Applies or updates a visual sleeve envelop and status effect on target.
+---@param target ObjectRef Target player or entity to envelop
+---@param effect_def table Configuration: { id: string, duration: number, texture: string }
+---@return ObjectRef? Envelop entity object
+function x_mob_core.apply_envelop(target, effect_def)
+	return x_mob_core.combat.envelop.apply_envelop(target, effect_def)
+end
+
+---Removes all active effects and detaches/removes envelop entity from target.
+---@param target ObjectRef Target player or entity
+function x_mob_core.remove_envelop(target)
+	return x_mob_core.combat.envelop.remove_envelop(target)
+end
+
+---Removes a specific active effect from target's envelop, preserving remaining effects.
+---@param target ObjectRef Target player or entity
+---@param effect_id string Unique effect ID to remove
+function x_mob_core.remove_envelop_effect(target, effect_id)
+	return x_mob_core.combat.envelop.remove_envelop_effect(target, effect_id)
+end
+
+---Checks if target currently has an active envelop or a specific active effect.
+---@param target ObjectRef Target player or entity
+---@param effect_id? string Optional specific effect ID to query
+---@return boolean is_enveloped True if active envelop/effect exists
+function x_mob_core.is_enveloped(target, effect_id)
+	return x_mob_core.combat.envelop.is_enveloped(target, effect_id)
+end
+
+x_mob_core.has_envelop = x_mob_core.is_enveloped
+
+---Returns active envelop data record for target if present.
+---@param target ObjectRef Target player or entity
+---@return table? data Active envelop metadata
+function x_mob_core.get_envelop_data(target)
+	return x_mob_core.combat.envelop.get_envelop_data(target)
+end
+
+-- Status Effect Subsystem
+
+---Applies or refreshes a status effect on target (player or mob entity).
+---@param target ObjectRef Target player or entity
+---@param effect_def table Status effect definition: { id: string, type: string, duration: number, ... }
+---@return ObjectRef|boolean result Envelop object if envelop attached, or true on success
+function x_mob_core.apply_status_effect(target, effect_def)
+	return x_mob_core.combat.status_effects.apply_effect(target, effect_def)
+end
+
+---Removes an active status effect from target.
+---@param target ObjectRef Target player or entity
+---@param effect_id string Unique effect ID to remove
+---@return boolean success True if effect was removed
+function x_mob_core.remove_status_effect(target, effect_id)
+	return x_mob_core.combat.status_effects.remove_effect(target, effect_id)
+end
+
+---Checks if target currently has an active status effect.
+---@param target ObjectRef Target player or entity
+---@param effect_id string Unique effect ID
+---@return boolean has_effect True if effect is active
+function x_mob_core.has_status_effect(target, effect_id)
+	return x_mob_core.combat.status_effects.has_effect(target, effect_id)
+end
+
+---Checks if target is currently rooted / immobilized.
+---@param target ObjectRef Target player or entity
+---@return boolean is_rooted True if target has an active root status effect or speed_factor <= 0
+function x_mob_core.is_rooted(target)
+	return x_mob_core.combat.status_effects.is_rooted(target)
+end
+
+---Retrieves all active status effects for a target.
+---@param target ObjectRef Target player or entity
+---@return table? effects Active status effects map
+function x_mob_core.get_status_effects(target)
+	return x_mob_core.combat.status_effects.get_effects(target)
+end
+
+---Clears all active status effects and restores baseline physics on target.
+---@param target ObjectRef Target player or entity
+function x_mob_core.clear_status_effects(target)
+	return x_mob_core.combat.status_effects.clear_effects(target)
+end
+
+x_mob_core.effects = x_mob_core.combat.effects
+x_mob_core.hud_effects = x_mob_core.combat.hud_effects
+x_mob_core.hunger_adapter = x_mob_core.combat.hunger_adapter
+x_mob_core.particles = x_mob_core.combat.particles
+
+---Registers or overrides a custom vignette texture for an effect ID.
+---@param effect_id string Unique status effect ID
+---@param texture_spec string Texture modifier string
+function x_mob_core.register_vignette(effect_id, texture_spec)
+	return x_mob_core.hud_effects.register_vignette(effect_id, texture_spec)
+end
+
+---Sets the global default base vignette texture asset.
+---@param texture_name string Texture asset filename
+function x_mob_core.set_default_vignette(texture_name)
+	return x_mob_core.hud_effects.set_default_vignette(texture_name)
+end
+
+---Sets the global vignette prominence / opacity scaling multiplier.
+---@param multiplier number Prominence multiplier (e.g. 1.0 = standard, 1.5 = high contrast)
+function x_mob_core.set_vignette_prominence_multiplier(multiplier)
+	return x_mob_core.hud_effects.set_prominence_multiplier(multiplier)
+end
+
+---Gets the global vignette prominence / opacity scaling multiplier.
+---@return number multiplier
+function x_mob_core.get_vignette_prominence_multiplier()
+	return x_mob_core.hud_effects.get_prominence_multiplier()
+end
+
+-- Attached Particles Subsystem
+
+---Attaches an ongoing or burst particle spawner to a target ObjectRef.
+---@param target ObjectRef Target player or entity
+---@param def table Particle spawner definition table
+---@param playername? string Optional player name for selective packet scoping
+---@return integer|nil spawner_id Particle spawner identifier
+function x_mob_core.attach_particles(target, def, playername)
+	return x_mob_core.combat.particles.attach(target, def, playername)
+end
+
+---Safely deletes an active particle spawner for a target.
+---@param target ObjectRef Target player or entity
+---@param spawner_id integer Particle spawner identifier
+---@param playername? string Optional player name if spawner was scoped
+---@return boolean success
+function x_mob_core.delete_particles(target, spawner_id, playername)
+	return x_mob_core.combat.particles.delete(target, spawner_id, playername)
+end
+
+---Clears and deletes all active particle spawners for a given target.
+---@param target ObjectRef Target player or entity
+function x_mob_core.clear_target_particles(target)
+	return x_mob_core.combat.particles.clear_target(target)
+end
+
 -- Motor & Steering Controller
 
 ---Executes tactical retreat steering away from a target position.
@@ -434,6 +645,16 @@ end
 ---@return boolean is_retreating Whether retreat movement is actively executing
 function x_mob_core.retreat_from(self, target_pos, speed)
 	return x_mob_core.motor.locomotion.retreat_from(self, target_pos, speed)
+end
+
+---Advances tactical retreat, standoff kiting, and close-quarters retaliation for fleeing mobs.
+---@param self table Entity instance
+---@param dtime number Step delta time
+---@param def? table Entity definition table
+---@param moveresult? table Engine move result
+---@return boolean handled Whether tactical retreat intercepted the step
+function x_mob_core.step_tactical_retreat(self, dtime, def, moveresult)
+	return x_mob_core.motor.locomotion.step_tactical_retreat(self, dtime, def, moveresult)
 end
 
 ---Scans for living players within radius using field of view and raycast line-of-sight checks.
@@ -470,6 +691,14 @@ end
 ---@param self table Entity instance
 function x_mob_core.halt_horizontal_velocity(self)
 	return x_mob_core.motor.locomotion.halt_horizontal_velocity(self)
+end
+
+---Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity.
+---@param self table Entity instance
+---@param speed number Horizontal movement speed
+---@param yaw number Orientation angle in radians
+function x_mob_core.set_horizontal_velocity(self, speed, yaw)
+	return x_mob_core.motor.locomotion.set_horizontal_velocity(self, speed, yaw)
 end
 
 ---Checks if an entity is an aquatic mob (fish, shoal, etc.) that swims freely in liquid.
@@ -548,6 +777,11 @@ function x_mob_core.check_leash(follower_self)
 end
 
 ---Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy.
+---Directly assigns `ent.target = target` and switches unengaged allies to `"combat"`.
+---Note: This is an imperative one-shot function requiring a valid living `ObjectRef`.
+---For automated damage and death rallying with spatial memory investigation (navigating
+---to disturbance coordinates even without line of sight), use declarative `swarm_alert`
+---in the mob definition instead.
 ---@param self table Mob instance
 ---@param target ObjectRef Threat target
 ---@param radius? number Alert radius in nodes (default: 16.0)
@@ -690,6 +924,14 @@ end
 ---@return string uuid
 function x_mob_core.generate_uuid()
 	return x_mob_core.utils.generate_uuid()
+end
+
+---Shallow copies a table.
+---@generic T : table
+---@param tbl T
+---@return T
+function x_mob_core.shallow_copy(tbl)
+	return x_mob_core.utils.shallow_copy(tbl)
 end
 
 ---Performs an unobstructed line of sight check between two points using Raycast.

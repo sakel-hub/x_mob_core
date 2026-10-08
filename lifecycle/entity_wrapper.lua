@@ -24,6 +24,7 @@ local locomotion = dofile(modpath .. "/motor/locomotion.lua")
 local mob_ai = dofile(modpath .. "/motor/mob_ai.lua")
 local sound = dofile(modpath .. "/audio/sound.lua")
 local loot = dofile(modpath .. "/combat/loot.lua")
+local melee = dofile(modpath .. "/combat/melee.lua")
 local shooter = dofile(modpath .. "/combat/shooter.lua")
 local factions = dofile(modpath .. "/combat/factions.lua")
 local swarm = dofile(modpath .. "/pack/swarm.lua")
@@ -48,6 +49,47 @@ entity_wrapper.set_armor_groups = properties.set_armor_groups
 entity_wrapper.handle_punch = combat_handler.handle_punch
 
 -- Register core step pipeline hooks (Open/Closed Principle)
+-- Priority 15: Pre-Combat Custom Abilities / Spells Hook
+pipeline.register_step_hook("custom_step", 15, function(self, dtime, def, moveresult)
+	local fn = def.custom_step or self.custom_step
+	if fn and not self.is_dead and self.state ~= "flinching" then
+		return fn(self, dtime, moveresult, def) == true
+	end
+	return false
+end)
+
+-- Priority 17: Tactical Retreat & Cornered Retaliation Hook
+pipeline.register_step_hook("tactical_retreat", 17, function(self, dtime, def, moveresult)
+	local is_fleeing = (self.state == "fleeing")
+		or (self.state == "channeling")
+		or (self.panic_timer and self.panic_timer > 0)
+		or (self.memory and self.memory.flee_state)
+	if is_fleeing and not self.is_dead and self.state ~= "flinching" then
+		return locomotion.step_tactical_retreat(self, dtime, def, moveresult)
+	end
+	return false
+end)
+
+-- Priority 18: Melee Auto-Combat
+pipeline.register_step_hook("melee", 18, function(self, dtime, def)
+	local is_melee_enabled = false
+	if def.melee == false then
+		is_melee_enabled = false
+	elseif def.melee == true or type(def.melee) == "table" then
+		is_melee_enabled = true
+	elseif def.melee == nil then
+		-- Default melee is enabled if damage or attack_range is defined and not a pure shooter, swarm, or shoal
+		if not def.shooter and not def.swarm and not def.shoal and (def.damage or def.attack_range or def.perform_attack) then
+			is_melee_enabled = true
+		end
+	end
+
+	if is_melee_enabled and self.target and self.state ~= "flinching" then
+		return melee.step(self, dtime, def)
+	end
+	return false
+end)
+
 -- Priority 20: Shooter Auto-Combat
 pipeline.register_step_hook("shooter", 20, function(self, dtime, def)
 	if def.shooter and self.target and self.state ~= "flinching" then
@@ -98,6 +140,11 @@ function entity_wrapper.set_target(self, target)
 	local old_target = self.target
 	if old_target == target then return false end
 	self.target = target
+	if not target then
+		self._flee_used = nil
+		self._flee_burst_timer = nil
+		self._flee_channel_timer = nil
+	end
 	x_mob_core.emit("on_mob_target", self, target, old_target)
 	return true
 end
@@ -281,8 +328,12 @@ function entity_wrapper.handle_core_step(self, dtime, def)
 			elseif def.shoal and def.shoal.enabled ~= false and self.state == "attacking" then
 				shoal.on_action_end(self, def)
 			end
-			local is_fleeing = (self.state == "fleeing") or (self.panic_timer and self.panic_timer > 0)
-			if not is_fleeing and self.state ~= "idle" and self.state == prev_state then
+			local is_fleeing = (self.state == "fleeing")
+				or (self.panic_timer and self.panic_timer > 0)
+				or (self.memory and self.memory.flee_state)
+			if self.memory and self.memory.flee_state then
+				self.state = "fleeing"
+			elseif not is_fleeing and self.state ~= "idle" and self.state == prev_state then
 				self.state = "idle"
 				animator.play(self.object, "idle", {speed = 1.0, loop = true})
 			end
@@ -330,7 +381,7 @@ end
 
 ---Registers a mob definition with standardized physical properties and lifecycle integration.
 ---@param name string Entity name (e.g. "x_mobs:spider")
----@param def table Entity definition table
+---@param def MobRegistrationDef Entity definition table
 function entity_wrapper.register_mob(name, def)
 	def.name = name
 	properties.resolve_mob_properties(def)
@@ -477,6 +528,9 @@ function entity_wrapper.register_mob(name, def)
 		self.can_crawl = def.can_crawl
 		self.is_floating = def.is_floating
 		self.hover_offset = def.hover_offset
+		self.combat_hover_offset = def.combat_hover_offset
+		self.flight_elevation = def.flight_elevation or def.hover_offset
+		self.combat_standoff = def.combat_standoff
 		-- Health regeneration
 		self.health_regen = def.health_regen
 		self.on_regen_step = def.on_regen_step
@@ -486,6 +540,7 @@ function entity_wrapper.register_mob(name, def)
 		self.damage = def.damage
 		self.damage_effect = def.damage_effect
 		self.knockback_mult = (def.knockback_mult ~= nil and def.knockback_mult) or 1.5
+		self.max_angular_speed = def.max_angular_speed or 4.0
 		self._def = def
 
 		-- Normalize factions & friendly fire configuration
@@ -495,7 +550,10 @@ function entity_wrapper.register_mob(name, def)
 		self.faction_list = f_list
 		self.friendly_fire = (def.friendly_fire == true)
 
-		-- Copy sound configuration and stagger ambient timer
+		-- Copy animation and sound configuration and stagger ambient timer
+		if not self.animations and def.animations then
+			self.animations = def.animations
+		end
 		if not self.sounds and def.sounds then
 			self.sounds = def.sounds
 		end
@@ -521,15 +579,27 @@ function entity_wrapper.register_mob(name, def)
 		-- Pathfinding state, abilities & orientation
 		safety.init_abilities(self, def)
 		self._cur_rot = {x = 0, y = 0, z = 0}
-		self.swarm_alert = def.swarm_alert or {enabled = false}
+		local swarm_cfg = def.swarm_alert
+		if swarm_cfg == nil and def.pack then
+			swarm_cfg = def.pack.swarm_alert
+		end
+		if swarm_cfg == true then
+			self.swarm_alert = {enabled = true}
+		elseif type(swarm_cfg) == "table" then
+			self.swarm_alert = swarm_cfg
+			if self.swarm_alert.enabled == nil then
+				self.swarm_alert.enabled = true
+			end
+		else
+			self.swarm_alert = {enabled = false}
+		end
 
 		-- Initialize pack identity and hierarchy
 		self.pack_id = data.pack_id
 		if def.pack then
 			if def.pack.role == "leader" then
 				self.pack_id = self.pack_id or utils.generate_uuid()
-				local pack_cfg = {}
-				for k, v in pairs(def.pack) do pack_cfg[k] = v end
+				local pack_cfg = utils.shallow_copy(def.pack)
 				pack_cfg.pack_id = self.pack_id
 				squad.init_leader(self, pack_cfg)
 				if def.pack.spawn_on_init then
@@ -636,7 +706,8 @@ function entity_wrapper.register_mob(name, def)
 		elseif not self.target then
 			mob_ai.step_wander_or_idle(self, dtime)
 		else
-			mob_ai.step_move_or_idle(self, dtime)
+			local move_anim = def.pursuit_anim or (def.animations and def.animations.run and "run") or "walk"
+			mob_ai.step_move_or_idle(self, dtime, move_anim)
 		end
 	end
 

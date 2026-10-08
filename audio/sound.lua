@@ -3,28 +3,6 @@
 	Manages positional audio, ambient vocalizations, hurt/death triggers, and pitch jitter
 ]]
 
----@class SoundConfigDef
----@field name string|string[] Technical sound name or list of sound variations
----@field gain? number Volume multiplier (default: 1.0)
----@field distance? number Maximum audible distance in nodes (default: 16.0)
----@field max_hear_distance? number Alias for distance in nodes
----@field pitch? number Base pitch multiplier (default: 1.0)
----@field pitch_jitter? number Random pitch variation factor (default: 0.05)
----@field min_interval? number Minimum cooldown between automatic triggers (default: 8.0)
----@field max_interval? number Maximum cooldown between automatic triggers (default: 22.0)
----@field chance? number Probability to play when interval expires (default: 1.0)
-
----@class MobSoundDef
----@field distance? number Global default hear distance in nodes (default: 24.0)
----@field max_hear_distance? number Alias for distance in nodes
----@field gain? number Global default volume multiplier (default: 1.0)
----@field pitch_jitter? number Global default pitch jitter factor (default: 0.05)
----@field hurt? string|SoundConfigDef Sound played on non-lethal damage
----@field death? string|SoundConfigDef Sound played on lethal damage
----@field random? string|SoundConfigDef Periodic ambient sound played during wander/idle
----@field attack? string|SoundConfigDef Sound played on melee or ranged strike
----@field alert? string|SoundConfigDef Sound played when a target is first acquired
-
 ---@class SoundSubsystem
 local sound = {}
 
