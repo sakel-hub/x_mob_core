@@ -32,6 +32,8 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
   - Zero-latency runtime playback speed scaling and looping track synchronization.
   - Frame-range fallback for legacy skeletal animations.
 - **Combat & Damage Subsystems**:
+  - Declarative melee combat (`melee = { range = ..., damage = ..., cooldown = ..., duration = ..., delay = ... }`) with automatic reach tolerance, horizontal halting, animation timing, and impact damage.
+  - Declarative ranged combat & intercept aiming (`shooter = { projectile = ..., range = ..., min_range = ..., velocity = ..., predict_aim = ... }`) with tactical kiting and aim prediction.
   - Native tool capabilities calculation, damage groups, and weapon wear mechanics.
   - Directional damage particles (configurable blood, ichor, smoke, spectral, sparks) and damage indicator flashing.
   - Liquid knockback dampening and configurable knockback resistance multipliers.
@@ -40,6 +42,13 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
   - Declarative loot drop tables with radial parabolic fountain drops (`x_mob_core.drop_items`).
   - Procedural `[combine:` overhead health bars with 5-tier color palettes, proportional bounding box scaling, head clearance, and auto-resetting timeout windows.
   - Universal child, passenger, and arrow detachment on entity death.
+- **Status Effects, 3D Envelops & Fullscreen Vignettes**:
+  - Centralized status effects framework (`x_mob_core.apply_status_effect`, `x_mob_core.remove_status_effect`, `x_mob_core.has_status_effect`, `x_mob_core.get_damage_multiplier`).
+  - Compound player physics override aggregation (`speed_factor`, `jump_factor`, `gravity_factor`) supporting `player_monoids`, `pova`, and vanilla fallbacks.
+  - Armor-penetrating Damage-over-Time (DoT) tickers with custom interval and particle spawner callbacks.
+  - 3D visual envelop sleeve attachments (`x_mob_core.apply_envelop`) mapped to entities and players.
+  - Full-viewport responsive screen vignette HUD subsystem (`x_mob_core.hud_effects`) with multi-effect compositing and dynamic colorization.
+  - Multi-mod hunger and stamina drain adapter (`x_mob_core.hunger_adapter`) with anti-heal suppression compatible with `stamina`, `hbhunger`, and `hunger_ng`.
 - **Pack Coordination & Swarm Intelligence**:
   - Pack UUID generation, leader-follower registry, and automatic orphan adoption.
   - Spatial leash tethering, regroup steering vectors, and rally commands.
@@ -97,8 +106,14 @@ x_mob_core/
 │   ├── knockback.lua        # Knockback physics dampening
 │   ├── effects.lua          # Damage indication and directional particles
 │   ├── factions.lua         # Faction allegiance and relationship checks
+│   ├── health_bar.lua       # Procedural overhead health bar rendering and color bands
+│   ├── melee.lua            # Declarative melee combat, reach checks, and attack delays
 │   ├── shooter.lua          # Predictive intercept aiming, kiting, and projectile pipeline
 │   ├── loot.lua             # Radial parabolic item drops and declarative drop tables
+│   ├── envelop.lua          # Reusable 3D sleeve envelop framework
+│   ├── status_effects.lua   # Centralized status effects, physics overrides, and DoTs
+│   ├── hud_effects.lua      # Responsive full-viewport HUD screen vignettes
+│   ├── hunger_adapter.lua   # Multi-mod hunger and stamina drain adapter
 │   └── detachment.lua       # Child, passenger, and arrow detachment on death
 ├── spawning/
 │   ├── registry.lua         # Spawn rule registry
@@ -127,7 +142,7 @@ x_mob_core/
 
 For full documentation of all classes, types, and methods, see [API.md](API.md).
 
-### 1. Registering a Custom Mob
+### 1. Registering a Custom Melee Mob
 
 ```lua
 x_mob_core.register_mob("mymod:goblin", {
@@ -139,51 +154,66 @@ x_mob_core.register_mob("mymod:goblin", {
             "mymod_goblin.png^[colorize:#22aa55:30", -- Forest goblin variant
         },
         collisionbox = {-0.3, -0.01, -0.3, 0.3, 1.2, 0.3},
+        visual_size = {x = 1.0, y = 1.0},
+        stepheight = 1.1,
     },
 
-    movement = {
-        walk_speed = 3.0,
-        run_speed = 4.5,
-        can_swim = true,
-        can_climb = true,
-        can_open_doors = true,
-    },
+    -- Faction Allegiance & Combat Attributes
+    factions = { "goblin", "monsters" },
+    armor_groups = { fleshy = 100 },
+    aggro_radius = 16.0,
+    knockback_mult = 0.8,
+    damage_effect = { type = "blood", count = 10 },
 
-    combat = {
+    -- Locomotion & Physics Tuning (Flat properties on def)
+    walk_speed = 3.0,
+    pursuit_speed = 4.5,
+    wander_speed = 1.8,
+    wander_radius = 12.0,
+    can_swim = true,
+    can_climb = true,
+    can_open_doors = true,
+    can_crawl = false,
+
+    -- Declarative Melee Combat Pipeline
+    melee = {
+        range = 2.0,
         damage = 4,
-        reach = 2.0,
-        aggro_radius = 16.0,
-        knockback_mult = 0.8,
-        damage_effect = {
-            type = "blood",
-            count = 10,
-        },
+        cooldown = 1.2,
+        duration = 0.5,
+        delay = 0.25,
+        animation = "attack",
+        sound = "attack",
     },
 
-    animation = {
-        tracks = {
-            idle = "idle",
-            walk = "walk",
-            combat = "attack",
-            death = "death",
-        },
+    -- Skeletal glTF Multi-Track Animations Map
+    animations = {
+        idle   = { track = "idle",   speed = 1.0, loop = true },
+        walk   = { track = "walk",   speed = 1.0, loop = true },
+        run    = { track = "run",    speed = 1.2, loop = true },
+        attack = { track = "attack", speed = 1.2, loop = false },
+        death  = { track = "death",  speed = 1.0, loop = false },
     },
 
+    -- Positional Audio Feedback
     sounds = {
+        distance = 16.0,
+        gain = 0.8,
         hurt = "mymod_goblin_hurt",
         death = "mymod_goblin_death",
         random = "mymod_goblin_ambient",
         attack = "mymod_goblin_attack",
     },
 
+    -- Declarative Loot Drops (Radial parabolic launch)
     drops = {
-        {name = "default:gold_lump", chance = 0.25, min = 1, max = 2},
-        {name = "default:flint", chance = 0.50, min = 1, max = 3},
+        { name = "default:gold_lump", chance = 0.25, min = 1, max = 2 },
+        { name = "default:flint",     chance = 0.50, min = 1, max = 3 },
     },
 
-    -- Optional Overhead Health Bar (Enabled by default; fully customizable)
+    -- Overhead Combat Health Bar (Enabled by default; fully customizable)
     health_bar = {
-        enabled = true,                     -- Enable overhead health bar for this mob
+        enabled = true,                     -- Overhead health bar display on damage
         width = 64,                         -- Texture canvas width in px
         height = 8,                         -- Texture canvas height in px
         timeout = 4.0,                      -- Duration before auto-hiding (resets on damage)
@@ -198,25 +228,40 @@ x_mob_core.register_mob("mymod:goblin", {
         },
     },
 
-    -- Health Regeneration & Tactical Fleeing (Built-in default: 0.5 HP/s while running away)
+    -- Health Regeneration & Tactical Retreat
+    -- Default: Tactical Disengage & Vulnerable Channel (sprints away, channels heal, re-engages)
+    -- Continuous retreat with per-second regen: unlimited_flee = true
     health_regen = {
-        rate = 1.0,                         -- HP regenerated per second (default: 0.5)
-        overlay = true,                     -- Flash white texture overlay on heal tick (default: true)
+        enabled = true,                     -- Enable health regeneration and retreat (default: true)
+        flee_threshold = 6,                 -- Absolute HP threshold to trigger retreat (default: 25% max HP)
+        return_threshold = 14,              -- Absolute HP threshold to exit retreat & re-engage (default: 60% max HP)
+        burst_duration = 3.5,               -- Sprint burst seconds before channeling (default: 3.5s)
+        channel_duration = 3.0,             -- Seconds stationary channeling heal (default: 3.0s)
+        safe_distance = 10.0,               -- Distance in nodes to halt and channel early (default: 10.0m)
+        heal_amount = 8,                    -- HP restored on channel completion (default: return - flee)
+        flee_speed = 4.2,                   -- Balanced sprint speed in m/s (default: <= 4.2 m/s for catchability)
+        overlay = true,                     -- Flash white texture overlay on heal / channel pulse (default: true)
         overlay_color = "^[colorize:#FFFFFF60", -- Custom overlay tint (default: white)
-        passive = false,                    -- Enable passive recovery when not fleeing (default: false)
-        flee_threshold = 10,                -- HP to trigger fleeing (default: 25% max HP)
-        return_threshold = 24,              -- HP to exit fleeing & re-engage (default: 60% max HP)
+        passive = false,                    -- Enable passive recovery out of combat (default: false)
+        rate = 0.5,                         -- HP/s for passive recovery or unlimited_flee (default: 0.5)
+        unlimited_flee = false,             -- Set true for cowardly mobs to flee continuously without channel
     },
 
-    -- Optional Pack Mechanics (Handled automatically by x_mob_core)
+    -- Pack & Squad Coordination (Handled automatically by x_mob_core)
     pack = {
         role = "member",
         leader_type = "mymod:goblin_chief",
         leash_distance = 16.0,
         regroup_distance = 4.0,
-        on_leader_lost = function(self)
-            self.state = "fleeing"
-        end,
+        on_leader_lost = "flee",
+        swarm_alert = true,
+    },
+
+    -- Declarative Pack Threat Rally
+    swarm_alert = {
+        enabled = true,
+        radius = 16.0,
+        max_allies = 4,
     },
 
     -- Optional Custom States
@@ -236,45 +281,114 @@ x_mob_core.register_mob("mymod:goblin", {
 })
 ```
 
-### 2. Registering Natural Spawning
+### 2. Registering a Ranged / Archer Mob
+
+```lua
+x_mob_core.register_mob("mymod:skeleton_archer", {
+    initial_properties = {
+        hp_max = 20,
+        mesh = "mymod_skeleton.glb",
+        textures = { "mymod_skeleton.png" },
+        collisionbox = {-0.35, 0.0, -0.35, 0.35, 1.8, 0.35},
+        visual_size = {x = 1.0, y = 1.0},
+    },
+
+    factions = { "undead", "skeleton" },
+    aggro_radius = 20.0,
+    walk_speed = 3.2,
+    pursuit_speed = 4.0,
+    wander_speed = 1.8,
+    knockback_mult = 0.5,
+    damage_effect = { type = "none" },
+
+    -- Declarative Ranged Combat & Tactical Kiting
+    shooter = {
+        projectile = "mymod:arrow",         -- Technical entity name of spawned projectile
+        velocity = 18.0,                    -- Projectile launch velocity in nodes/s
+        damage = 5,                         -- Projectile impact damage
+        range = 16.0,                       -- Maximum firing range in nodes
+        min_range = 5.0,                    -- Minimum distance before kiting/backing away
+        cooldown = 2.5,                     -- Firing cooldown in seconds
+        fire_duration = 0.8,                -- Windup / draw duration holding pose
+        fire_delay = 0.4,                   -- Delay before projectile releases
+        animation = "shoot",                -- Animation track for drawing/shooting
+        sound = "mymod_bow_shoot",          -- Sound played on release
+        predict_aim = true,                 -- Intercept lead aiming based on target velocity
+        retreat_speed = 3.5,                -- Movement speed while kiting
+        shoot_while_retreating = true,      -- Can fire arrows while backing away
+    },
+
+    animations = {
+        idle  = { track = "idle",  speed = 1.0, loop = true },
+        walk  = { track = "walk",  speed = 1.0, loop = true },
+        run   = { track = "run",   speed = 1.0, loop = true },
+        shoot = { track = "shoot", speed = 1.0, loop = false },
+        death = { track = "death", speed = 1.0, loop = false },
+    },
+})
+```
+
+### 3. Registering Natural Spawning
 
 ```lua
 x_mob_core.register_spawn("mymod:goblin", {
-    nodes = {"group:soil", "default:dirt_with_grass", "default:stone"},
+    nodes = { "group:soil", "default:dirt_with_grass", "default:stone" },
+    biomes = { "grassland", "deciduous_forest" },
     chance = 2000,
     active_object_count = 3,
+    max_total_in_radius = 6,
     group_min = 2,
     group_max = 4,
     min_light = 0,
     max_light = 12,
     min_elevation = -31000,
     max_elevation = 31000,
+    night_only = true,
 })
 ```
 
-### 3. Event Bus Integration
+### 4. Event Bus Integration
 
 Listen to decoupled lifecycle and combat events:
 
 ```lua
-x_mob_core.listen("on_mob_death", function(self, puncher)
-    if puncher and puncher:is_player() then
-        core.chat_send_player(puncher:get_player_name(), "You vanquished " .. self.name .. "!")
+x_mob_core.listen("on_mob_death", function(self, killer)
+    if killer and killer:is_player() then
+        core.chat_send_player(killer:get_player_name(), "You vanquished " .. self.name .. "!")
     end
 end)
 ```
 
-### 4. Step Pipeline Middleware
+### 5. Step Pipeline Middleware
 
-Inject custom logic into the entity update loop without modifying core files:
+Inject custom crowd-control or status effect logic into the entity update loop without modifying core files:
 
 ```lua
-x_mob_core.register_step_hook("mymod:freeze_aura", 50, function(self, dtime, def, moveresult)
+-- Priority 10: Crowd-control hook halts movement and attacks before standard combat
+x_mob_core.register_step_hook("mymod:freeze_aura", 10, function(self, _dtime, _def, _moveresult)
     if self.is_frozen then
         x_mob_core.halt_horizontal_velocity(self)
-        return true -- Halts subsequent pipeline steps
+        return true -- Halts subsequent pipeline steps and locomotion
     end
 end)
+```
+
+### 6. Applying Status Effects & 3D Envelops
+
+Apply custom status effects with compound physics modifiers, 3D visual sleeves, and responsive fullscreen HUD vignettes:
+
+```lua
+-- Apply an armor-penetrating burn with visual envelop sleeve and responsive HUD vignette
+x_mob_core.apply_status_effect(target, {
+    id = "ignite",
+    duration = 4.0,
+    interval = 1.0,
+    damage = 1,
+    speed_factor = 0.85,
+    envelop_texture = "x_mobs_fire_envelop.png",
+    hud_vignette = "x_mob_core_vignette.png^[colorize:#ff450077",
+    cleanse_in_water = true,
+})
 ```
 
 ---
@@ -287,6 +401,11 @@ Configurable via `minetest.conf` or the Luanti **Settings -> Mod Settings** UI:
 |:---|:---|:---|:---|
 | `x_mob_damage_particles` | `enum` | `mob_default` | Visual damage particle style (`mob_default`, `blood`, `smoke`, `ichor`, `spectral`, `sparks`, `none`). |
 | `x_mob_damage_particle_multiplier` | `float` | `1.0` | Global particle count scaling multiplier (`0.0` to `3.0`). |
+| `x_mob_core_enable_health_bars` | `bool` | `true` | Enable procedural overhead health bars when mobs take damage. |
+| `x_mob_core_health_bar_timeout` | `float` | `4.0` | Duration in seconds before a mob health bar automatically hides (`1.0` to `30.0`). |
+| `x_mob_core_health_bar_auto_remove` | `bool` | `true` | Automatically remove inactive health bar child entities on timeout instead of keeping hidden. |
+| `x_mob_core_enable_hud_vignettes` | `bool` | `true` | Enable responsive fullscreen HUD screen vignettes for status effects. |
+| `x_mob_core_hud_vignette_opacity_multiplier` | `float` | `1.0` | Opacity/prominence scaling multiplier for HUD vignettes (`0.5` to `2.5`). |
 
 ---
 

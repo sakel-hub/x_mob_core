@@ -42,7 +42,7 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `broadcast_threat` | `function CoordinationSubsystem.broadcast_threat(self: table, target: ObjectRef, radius?: number, max_allies?: integer)` | Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy @*param* `self` — Mob instance @*param* `target` — Threat target @*param* `radius` — Alert radius in nodes (default: 16.0) @*param* `max_allies` — Max allies to alert (default: 4) |
+| `broadcast_threat` | `function CoordinationSubsystem.broadcast_threat(self: table, target: ObjectRef, radius?: number, max_allies?: integer)` | Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy. Directly assigns `ent.target = target` and transitions idle/roaming allies into `"combat"`. Note: This is an imperative function requiring an active `ObjectRef`. Unlike declarative `swarm_alert`, it does not write coordinate memory for obscured allies, nor does it trigger automatically on death. @*param* `self` — Mob instance @*param* `target` — Threat target @*param* `radius` — Alert radius in nodes (default: 16.0) @*param* `max_allies` — Max allies to alert (default: 4) |
 | `calculate_repulsion` | `function CoordinationSubsystem.calculate_repulsion(self: table, pos: Vector, radius?: number, strength?: number, ignore_behind?: boolean, min_sep?: number, vertical_factor?: number, horizontal_bias?: boolean)   -> sep_x: number   2. sep_y: number   3. sep_z: number` | Calculates 3D multi-agent Boids spatial repulsion with anti-stacking and soft/hard buffers @*param* `self` — Mob instance @*param* `pos` — Current world position @*param* `radius` — Repulsion radius (default: 2.0) @*param* `strength` — Push force multiplier (default: 2.4) @*param* `ignore_behind` — If true, ignores entities trailing behind self.object @*param* `min_sep` — Minimum hard penetration separation (default: radius * 0.6) @*param* `vertical_factor` — Vertical attenuation factor (default: 0.1) @*param* `horizontal_bias` — If true, applies horizontal anti-stacking bias (default: true) |
 | `check_leash` | `function CoordinationSubsystem.check_leash(follower_self: table)   -> is_leashed: boolean   2. leader_pos: Vector\|nil   3. dist: number` | Checks if a follower has exceeded its leash distance from its leader @*param* `follower_self` — Follower mob instance @*return* `is_leashed` — True if within leash limit, false if leashed/separated @*return* `leader_pos` — Position of leader if valid @*return* `dist` — Distance to leader |
 | `rally_followers` | `function CoordinationSubsystem.rally_followers(leader_self: table, target: ObjectRef)` | Rallies all pack followers to attack a shared target @*param* `leader_self` — Leader mob instance @*param* `target` — Target entity |
@@ -53,9 +53,9 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `enter` | `fun(self: table)?` | Called when state is entered |
-| `exit` | `fun(self: table)?` | Called when state is exited |
-| `step` | `fun(self: table, dtime: number):string\|nil` | State step tick; return state name to transition |
+| `enter` | `fun(self: MobStateContext)?` | Called when state is entered |
+| `exit` | `fun(self: MobStateContext)?` | Called when state is exited |
+| `step` | `fun(self: MobStateContext, dtime: number):string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+7)` | State tick; return state name to transition |
 
 ### `DamageEffectDef`
 
@@ -92,6 +92,16 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | :--- | :--- | :--- |
 | `detach_attached_children` | `function DetachmentSubsystem.detach_attached_children(mob_obj: ObjectRef)` | Detaches and drops all attached child objects (arrows, passengers, accessories) from a mob when it dies @*param* `mob_obj` — The mob entity ObjectRef |
 
+### `DoorsSubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `check_and_open_forward_doors` | `function DoorsSubsystem.check_and_open_forward_doors(pos: Vector, dir?: Vector, abilities?: table, object?: ObjectRef)` | Checks and proactively opens any closed doors directly ahead in movement direction @*param* `pos` — Current entity position @*param* `dir` — Direction of movement @*param* `abilities` — Mob capabilities table @*param* `object` — Entity ObjectRef |
+| `is_door_open` | `function DoorsSubsystem.is_door_open(pos: Vector, node?: table, def?: table)   -> is_open: boolean` | Checks if a door or trapdoor is currently already open @*param* `pos` — World position of door node @*param* `node` — Node table {name, param1, param2} @*param* `def` — Registered node definition @*return* `is_open` — True if door is already open |
+| `is_openable_door` | `function DoorsSubsystem.is_openable_door(name: string, abilities?: table)   -> is_openable: boolean` | Checks if a node represents an unlocked, openable door @*param* `name` — Node technical name @*param* `abilities` — Mob capabilities table @*return* `is_openable` — True if node is an openable door and mob can open doors |
+| `try_open_door` | `function DoorsSubsystem.try_open_door(pos: Vector, node?: table, def?: table, _user?: ObjectRef)   -> success: boolean` | Opens a door node if closed, ensuring already open doors are not toggled or touched @*param* `pos` — World position of door node @*param* `node` — Node table {name, param1, param2} @*param* `def` — Registered node definition @*param* `_user` — Entity attempting the interaction @*return* `success` — True if door is open or was successfully opened |
+| `try_open_door_at_pos` | `function DoorsSubsystem.try_open_door_at_pos(pos: Vector, abilities?: table, object?: ObjectRef)   -> opened: boolean` | Checks and opens an openable door node at a specific position @*param* `pos` — World position @*param* `abilities` — Ability flags table @*param* `object` — User/mob object |
+
 ### `DropEntryDef`
 
 | Field | Type | Description |
@@ -107,6 +117,7 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | :--- | :--- | :--- |
 | `killer` | `ObjectRef?` | Killer object/player if applicable |
 | `particle_color` | `string?` | Hex color for sparkle particles |
+| `particle_texture` | `string?` | Optional custom base particle texture |
 | `particles` | `boolean?` | Enable sparkle/burst particles (default: true) |
 | `sound` | `string?` | Sound identifier to play on drop |
 | `spread_max` | `number?` | Maximum horizontal spread velocity (default: 1.6) |
@@ -120,9 +131,9 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `clear_damage` | `function EffectsSubsystem.clear_damage(obj: ObjectRef)` | Clears any active damage flash on an entity, restoring its clean base texture modifier @*param* `obj` — Entity object |
-| `clear_regen` | `function EffectsSubsystem.clear_regen(obj: ObjectRef)` | Clears any active regeneration flash on an entity, restoring its clean base texture modifier @*param* `obj` — Entity object |
+| `clear_regen` | `function EffectsSubsystem.clear_regen(obj: ObjectRef)` | Clears any active health regeneration flash on an entity, restoring its clean base texture modifier @*param* `obj` — Entity object |
 | `indicate_damage` | `function EffectsSubsystem.indicate_damage(obj: ObjectRef)` | Flashes the entity red briefly upon taking damage for visual feedback. Prevents duplicate stacking, clears competing regen flashes, and handles rapid hits cleanly. @*param* `obj` — Entity object |
-| `indicate_regen` | `function EffectsSubsystem.indicate_regen(obj: ObjectRef, color?: string, duration?: number)` | Flashes the entity with a visible texture overlay (white by default) upon health regeneration. Yields precedence to active damage flashes. @*param* `obj` — Entity object @*param* `color` — Optional texture modifier overlay (default: `^[colorize:#FFFFFF60`) @*param* `duration` — Duration in seconds (default: 0.25) |
+| `indicate_regen` | `function EffectsSubsystem.indicate_regen(obj: ObjectRef, color?: string, duration?: number)` | Flashes the entity white briefly upon health regeneration for visual feedback. Yields precedence to active damage flashes and suppresses while dying. @*param* `obj` — Entity object @*param* `color` — Optional texture modifier overlay (default: "^[colorize:#FFFFFF60") @*param* `duration` — Optional duration in seconds (default: 0.25) |
 | `spawn_damage_particles` | `function EffectsSubsystem.spawn_damage_particles(obj: ObjectRef, puncher?: ObjectRef, dir?: Vector, damage?: number, def?: table)` | Spawns contextual, directional damage particles when an entity is damaged. Configurable globally via `x_mob_damage_particles` and `x_mob_damage_particle_multiplier`, or per-mob via `def.damage_effect`. Can be disabled by setting `damage_effect = false`, `damage_effect = "none"`, or `{ enabled = false }` / `{ type = "none" }`. @*param* `obj` — Entity object receiving damage @*param* `puncher` — Attacking entity or player @*param* `dir` — Strike/knockback direction vector @*param* `damage` — Damage points dealt @*param* `def` — Mob definition table |
 | `strip_damage_mod` | `function EffectsSubsystem.strip_damage_mod(mod?: string)   -> clean_mod: string` | Strips transient damage flash colorize modifiers from a texture modifier string @*param* `mod` — Original texture modifier string @*return* `clean_mod` — Texture modifier without damage colorize |
 | `strip_flash_mod` | `function EffectsSubsystem.strip_flash_mod(mod?: string)   -> clean_mod: string` | Strips all transient combat damage and regeneration flash colorize modifiers @*param* `mod` — Original texture modifier string @*return* `clean_mod` — Texture modifier without damage or regen colorize |
@@ -140,7 +151,7 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `normalize_texture_variations` | `unknown` |  |
 | `pipeline` | `unknown` |  |
 | `properties` | `unknown` |  |
-| `register_mob` | `function EntityWrapperSubsystem.register_mob(name: string, def: table)` | Registers a mob definition with standardized physical properties and lifecycle integration. @*param* `name` — Entity name (e.g. "x_mobs:spider") @*param* `def` — Entity definition table |
+| `register_mob` | `function EntityWrapperSubsystem.register_mob(name: string, def: MobRegistrationDef)` | Registers a mob definition with standardized physical properties and lifecycle integration. @*param* `name` — Entity name (e.g. "x_mobs:spider") @*param* `def` — Entity definition table |
 | `registered_mobs` | `table<string, MobRegistrationDef>` |  |
 | `set_armor_groups` | `unknown` |  |
 | `set_target` | `function EntityWrapperSubsystem.set_target(self: table, target: ObjectRef\|nil)   -> changed: boolean` | Sets the current target and fires on_mob_target event if target changed. @*param* `self` — Mob entity instance @*param* `target` — Target entity or player @*return* `changed` — True if target changed |
@@ -192,12 +203,94 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `resolve_color` | `function HealthBarSubsystem.resolve_color(ratio: number, color_list: table[])   -> color: string` | Resolves the bar fill color according to current health ratio and color tiers. @*param* `ratio` — Current health ratio (0.0 to 1.0) @*param* `color_list` — List of {threshold: number, color: string} @*return* `color` — Hex color string |
 | `show` | `function HealthBarSubsystem.show(self: table, cur_hp: number, max_hp: number, def?: table)   -> shown: boolean` | Shows or updates the overhead health bar on a mob entity, resetting the timeout window. @*param* `self` — Mob entity instance @*param* `cur_hp` — Current health value @*param* `max_hp` — Maximum health value @*param* `def` — Entity definition table @*return* `shown` — True if health bar is shown or updated |
 
+### `HealthRegenDef`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `burst_duration` | `number?` | Maximum sprint duration in seconds for initial tactical disengage burst before halting to channel heal (default: `3.5`). *Ignored when `unlimited_flee = true`.* |
+| `can_flee` | `boolean?` | Whether mob tactically flees when low on health (default: `true`, set `false` for stand-and-fight) |
+| `channel_duration` | `number?` | Duration in seconds mob stands stationary channeling heal once safe distance is reached (default: `3.0`). *Ignored when `unlimited_flee = true`.* |
+| `enabled` | `boolean?` | Whether health regeneration and tactical retreat are enabled (default: `true`) |
+| `flee_ratio` | `number?` | HP ratio below which mob enters retreat (default: `0.25` / 25% max HP) |
+| `flee_speed` | `number?` | Speed in m/s while fleeing (default: capped at `4.2` m/s for player catchability, or `def.flee_speed`) |
+| `flee_threshold` | `number?` | Absolute HP threshold below which mob flees (default: derived from `flee_ratio` * `max_hp`) |
+| `heal_amount` | `number?` | Flat HP restored when channeling completes uninterrupted (default: `return_threshold - flee_threshold`). *Ignored when `unlimited_flee = true`.* |
+| `max_flee_distance` | `number?` | Maximum retreat distance from fight/threat before halting (default: `15.0`) |
+| `overlay` | `boolean?` | Whether visual white texture overlay pulses on regeneration/channeling (default: `true`) |
+| `overlay_color` | `string?` | Custom texture modifier overlay string (default: `"^[colorize:#FFFFFF60"`) |
+| `passive` | `boolean?` | Whether regeneration occurs passively at all times while idle/walking (default: `false`) |
+| `rate` | `number?` | HP regenerated per second for passive regeneration or `unlimited_flee = true` (default: `0.5`). *For tactical disengage fleeing, healing occurs via channel completion instead.* |
+| `return_ratio` | `number?` | HP ratio to exit retreat and re-engage in combat (default: `0.60` / 60% max HP) |
+| `return_threshold` | `number?` | Absolute HP threshold to exit retreat and return to fight (default: derived from `return_ratio` * `max_hp`) |
+| `safe_distance` | `number?` | Distance in nodes from threat at which mob halts early to begin channeling heal (default: `10.0`). *Ignored when `unlimited_flee = true`.* |
+| `unlimited_flee` | `boolean?` | If `true`, mob flees continuously without burst timeout, channel halt, or 1-time limit (e.g. cowardly minions). If `false` (default), uses Tactical Disengage & Vulnerable Channel. |
+
+#### Tactical Fleeing & Health Regeneration Mechanics
+
+##### 1. Tactical Disengage & Vulnerable Channel (Default, `unlimited_flee = false`)
+Standard tactical retreat designed for balanced, engaging combat encounters without endless kiting loops:
+1. **Disengage Burst**: When HP drops to `<= flee_threshold`, the mob sprints away for up to `burst_duration` (default 3.5s) or until reaching `safe_distance` (default 10.0m) from threat. Default flee speed is balanced (`<= 4.2` m/s) so players without sprint buffs can pursue and catch up.
+2. **Stationary Channeling**: Upon reaching safe distance (or burst expiration), the mob stops in place, turns toward the threat, and channels for `channel_duration` (default 3.0s). During channeling, the mob emits visual white regeneration pulses every 0.6s.
+3. **Channel Completion**: If left uninterrupted for the full channel duration, the mob instantly recovers `heal_amount` HP (up to `return_threshold`), sets its 1-time retreat lock (`_flee_used = true`), and re-engages in combat.
+4. **Hit-Interrupt & Last Stand**: Striking the mob with a melee/ranged attack while fleeing or channeling immediately breaks the channel, sets `_flee_used = true`, and forces the mob to turn and fight to the death.
+5. **1-Time Limit**: Mobs execute at most one tactical retreat per combat encounter. The 1-time limit resets only after the mob fully recovers to 100% max HP or its target is cleared.
+
+##### 2. Unlimited Flee (`unlimited_flee = true`)
+For cowardly mobs (such as [Fallen Minion](file:///Users/juraj/Library/Application%20Support/minetest/mods/x_mobs/mobs/fallen_minion.lua)) designed to persistently run away:
+- Continues fleeing away from threat up to `max_flee_distance` without halting to channel.
+- Regenerates incrementally every second at `rate` HP/s while fleeing until reaching `return_threshold`.
+- Once HP reaches `return_threshold`, it exits retreat and returns to combat.
+- Can flee repeatedly across encounters without a 1-time lock.
+- **Ignored / Exclusive Properties**: `burst_duration`, `channel_duration`, `safe_distance`, and `heal_amount` are completely bypassed when `unlimited_flee = true`.
+
+```lua
+-- Example 1: Tactical Disengage Elite (Disengage & Channel)
+health_regen = {
+    flee_threshold = 20,
+    return_threshold = 45,
+    burst_duration = 3.5,
+    channel_duration = 3.0,
+    safe_distance = 12.0,
+    heal_amount = 25,
+    flee_speed = 4.2,
+}
+
+-- Example 2: Cowardly Minion (Unlimited Flee)
+health_regen = {
+    unlimited_flee = true,
+    flee_threshold = 5,
+    return_threshold = 12,
+    rate = 0.5,
+    flee_speed = 4.8,
+}
+```
+
 ### `KnockbackSubsystem`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `dampen_water_knockback` | `function KnockbackSubsystem.dampen_water_knockback(self: table)` | Dampens punch knockback when an entity is struck inside water @*param* `self` — Mob entity instance |
 | `get_multiplier` | `function KnockbackSubsystem.get_multiplier(obj: table\|ObjectRef)   -> multiplier: number` | Returns the effective knockback multiplier for an entity or ObjectRef @*param* `obj` — Target object or mob entity @*return* `multiplier` — (1.0 for players, mob-defined knockback_mult, or 1.0 default) |
+
+### `LocomotionSubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `apply_liquid_buoyancy` | `function LocomotionSubsystem.apply_liquid_buoyancy(self: table, dtime: number)   -> in_liquid: boolean   2. is_submerged: boolean   3. target_vy: number` | Applies active water buoyancy and partial submersion floating physics for swimming mobs @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*return* `in_liquid` — True if mob is currently inside a liquid node @*return* `is_submerged` — True if mob is submerged below target swimming waterline @*return* `target_vy` — Vertical velocity to maintain or reach swimming depth |
+| `calculate_liquid_vertical_velocity` | `function LocomotionSubsystem.calculate_liquid_vertical_velocity(self: table, current_y: number, target_y: number, is_subm: boolean, target_vy: number)   -> y_vel: number` | Calculates vertical velocity and applies buoyancy acceleration when navigating liquids @*param* `self` — Mob entity instance @*param* `current_y` — Current mob vertical position @*param* `target_y` — Desired waypoint/target vertical position @*param* `is_subm` — True if submerged @*param* `target_vy` — Target floating velocity from check_in_liquid @*return* `y_vel` — Vertical velocity to assign |
+| `calculate_separation_force` | `function LocomotionSubsystem.calculate_separation_force(self: table, current_pos: Vector, dtime: number, on_surface: boolean, normal: Vector)   -> sep_force: Vector` | Calculates a soft repulsive separation vector away from other nearby mobs to prevent clipping and merging into each other. Respects surface orientation (tangent projection on walls/ceilings). Throttled to 100ms per entity to ensure zero performance overhead on multiplayer servers. @*param* `self` — Mob entity state @*param* `current_pos` — Mob position @*param* `dtime` — Server step delta time @*param* `on_surface` — True if mob is on wall or ceiling @*param* `normal` — Surface normal vector (or {x=0, y=1, z=0} for floor) @*return* `sep_force` — Tangent/horizontal separation velocity offset |
+| `get_pursuit_state` | `function LocomotionSubsystem.get_pursuit_state(self: table)   -> is_pursuing: boolean` | Determines if mob is in active pursuit of a living target @*param* `self` — Entity instance |
+| `halt_horizontal_velocity` | `function LocomotionSubsystem.halt_horizontal_velocity(self: table)` | Halts horizontal velocity while preserving vertical motion/gravity and liquid buoyancy @*param* `self` — Mob entity instance |
+| `handle_mob_fleeing` | `function LocomotionSubsystem.handle_mob_fleeing(self: table, dtime: number, current_pos: Vector, on_wall_or_ceiling: boolean)   -> status: table` | Updates tactical fleeing behavior away from danger/threat sources @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*param* `current_pos` — Current mob world position @*param* `on_wall_or_ceiling` — Whether mob is adhering to wall/ceiling @*return* `status` — Locomotion status {moving = boolean, speed = number, has_los = boolean} |
+| `handle_mob_movement` | `function LocomotionSubsystem.handle_mob_movement(self: table, dtime: number, current_pos: Vector, next_waypoint: Vector)` | Handles physical movement and steering toward the next path waypoint @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*param* `current_pos` — Current mob world position @*param* `next_waypoint` — Target node world position |
+| `handle_mob_wandering` | `function LocomotionSubsystem.handle_mob_wandering(self: table, dtime: number, current_pos: Vector, on_wall_or_ceiling: boolean)   -> status: table` | Updates autonomous local wandering and idling when mob is not pursuing a target @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*param* `current_pos` — Current mob world position @*param* `on_wall_or_ceiling` — Whether mob is adhering to wall/ceiling @*return* `status` — Locomotion status {moving = boolean, speed = number, has_los = boolean} |
+| `has_wall_collision` | `function LocomotionSubsystem.has_wall_collision(self: table, current_pos: Vector, dtime: number)   -> is_colliding: boolean   2. wall_normal: Vector\|nil   3. node_pos: Vector\|nil` | Detects if entity has collided with a wall/solid obstacle or is physically stagnant against one @*param* `self` — Mob entity instance @*param* `current_pos` — Current world position @*param* `dtime` — Delta time @*return* `is_colliding` — Whether the mob is colliding with a wall @*return* `wall_normal` — Estimated normal pointing away from the wall @*return* `node_pos` — Position of collided node if known |
+| `retreat_from` | `function LocomotionSubsystem.retreat_from(self: table, target_pos: Vector, speed?: number)   -> success: boolean` | Executes a safe kiting retreat away from a target position with cliff/obstacle guard @*param* `self` — Mob instance @*param* `target_pos` — Threat / target world position @*param* `speed` — Movement speed (default: self.pursuit_speed or self.walk_speed or 3.0) @*return* `success` — True if a safe retreat direction was found and applied |
+| `safe_get_yaw` | `function LocomotionSubsystem.safe_get_yaw(obj: ObjectRef\|nil)   -> yaw: number` | Safely gets object yaw in radians |
+| `safe_set_acceleration` | `function LocomotionSubsystem.safe_set_acceleration(obj: ObjectRef\|nil, acc: Vector)` | Safely sets object acceleration |
+| `safe_set_rotation` | `function LocomotionSubsystem.safe_set_rotation(obj: ObjectRef\|nil, rot: Vector)` | Sets object rotation (Euler radians) |
+| `safe_set_yaw` | `function LocomotionSubsystem.safe_set_yaw(obj: ObjectRef\|nil, yaw: number)` | Safely sets object yaw in radians |
+| `set_horizontal_velocity` | `function LocomotionSubsystem.set_horizontal_velocity(self: table, speed: number, yaw: number)` | Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity @*param* `self` — Mob entity instance @*param* `speed` — Horizontal movement speed @*param* `yaw` — Orientation angle in radians |
 
 ### `LootSubsystem`
 
@@ -206,6 +299,51 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `drop_item` | `function LootSubsystem.drop_item(origin: Vector, itemstack: string\|ItemStack, angle?: number, options?: DropOptions)   -> item_obj: ObjectRef\|nil` | Spawns a single item with a physical parabolic launch arc @*param* `origin` — World coordinate of spawn origin @*param* `itemstack` — Item or ItemStack to drop @*param* `angle` — Launch azimuth in radians @*param* `options` — Physics and effect overrides @*return* `item_obj` — Spawned item entity or nil |
 | `drop_items` | `function LootSubsystem.drop_items(origin: Vector, drops: (string\|DropEntryDef)[], options?: DropOptions)   -> spawned_objects: ObjectRef[]` | Evaluates a declarative drop table and launches all dropped items in a radial fountain @*param* `origin` — World coordinate of spawn origin @*param* `drops` — List of drop table entries @*param* `options` — Physics, particle, and sound overrides @*return* `spawned_objects` — List of successfully spawned item ObjectRefs |
 | `spawn_mob_drops` | `function LootSubsystem.spawn_mob_drops(self: table, killer?: ObjectRef, drops: (string\|DropEntryDef)[], options?: DropOptions)   -> spawned_objects: ObjectRef[]` | Convenience method to drop items from a dying mob instance @*param* `self` — Mob entity instance @*param* `killer` — Killer entity or player @*param* `drops` — Mob drop definitions @*param* `options` — Runtime drop overrides @*return* `spawned_objects` — List of spawned item ObjectRefs |
+
+### `MeleeConfigDef`
+
+Declarative close-quarters melee combat configuration.
+When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
+reach distance validation, raycast line-of-sight checks, horizontal velocity halting,
+attack animations, directional audio cues, cooldown intervals, and timed strike impacts.
+
+### How It Works:
+1. **Reach & Line of Sight**: During each tick, checks if target distance <= `range` and target is visible.
+2. **Halting & Facing**: Upon reach entry, halts horizontal movement and turns the mob to face the target.
+3. **Strike Execution**: Starts `duration` pose, triggers `animation`, plays `sound`, and queues delayed hit.
+4. **Tolerance Validation**: At `delay` time, confirms target remains within `range + reach_tolerance`.
+5. **Impact Feedback**: Applies fleshy punch damage and invokes optional `on_strike` callback.
+
+### Usage Example:
+```lua
+melee = {
+    range = 2.4,
+    damage = 6,
+    cooldown = 1.4,
+    duration = 0.7,
+    delay = 0.35,
+    animation = "attack",
+    sound = "attack",
+    on_strike = function(self, target, dir)
+        -- Custom impact VFX or effects
+    end,
+}
+```
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `anim_speed` | `number?` | Animation playback speed multiplier (default: 1.2) |
+| `animation` | `string?` | Animation track name played when attacking (default: "attack") |
+| `cooldown` | `number?` | Attack cooldown between strikes in seconds (default: def.attack_interval or 1.2) |
+| `damage` | `number?` | Base melee strike damage dealt to targets (default: def.damage or 4) |
+| `delay` | `number?` | Delay before punch damage is applied in seconds (default: 0.25) |
+| `duration` | `number?` | Action timer duration holding attack pose in seconds (default: 0.5) |
+| `max_height_diff` | `number?` | Vertical reach tolerance in nodes (default: 2.0) |
+| `on_strike` | `fun(self: table, target: ObjectRef, dir: Vector)?` | Callback executed on punch impact |
+| `perform_attack` | `fun(self: table, target: ObjectRef, dir: Vector)?` | Custom melee attack callback override |
+| `range` | `number?` | Melee attack reach in nodes (default: def.attack_range or 2.0) |
+| `reach_tolerance` | `number?` | Additional reach buffer for moving targets at hit time (default: 0.6) |
+| `sound` | `string?` | Sound played when attacking (default: "attack") |
 
 ### `MinHeap`
 
@@ -226,32 +364,10 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `apply_liquid_buoyancy` | `function` |  |
-| `check_and_open_forward_doors` | `function` |  |
-| `check_corridor_line_of_sight` | `function` |  |
-| `check_ground_line_of_sight` | `function` |  |
-| `check_in_liquid` | `function` |  |
-| `dir_to_surface_rotation` | `function` |  |
-| `find_adjacent_surface` | `function` |  |
-| `get_node` | `function MobAISubsystem.get_node(pos: any)   -> unknown` |  |
-| `get_node_or_nil` | `function MobAISubsystem.get_node_or_nil(pos: any)   -> unknown\|nil` |  |
-| `halt_horizontal_velocity` | `function` |  |
-| `handle_mob_fleeing` | `function` |  |
-| `handle_mob_movement` | `function` |  |
-| `has_wall_collision` | `function` |  |
-| `interpolate_rotation` | `function` |  |
-| `is_door_open` | `function` |  |
-| `is_openable_door` | `function` |  |
-| `is_step_safe` | `function` |  |
-| `is_valid_stand_pos` | `function` |  |
-| `mob_memory` | `table` |  |
-| `register_pathfinding_mob` | `function MobAISubsystem.register_pathfinding_mob(name: string, def: table)` | Entity Registration Helper Wraps standard mob definition with optimized pathfinding motor controller @*param* `name` — Entity technical name (e.g. "x_mobs:smart_zombie") @*param* `def` — Entity definition table |
-| `retreat_from` | `function MobAISubsystem.retreat_from(self: table, target_pos: Vector, speed?: number)   -> success: boolean` | Executes a safe kiting retreat away from a target position with cliff/obstacle guard @*param* `self` — Mob instance @*param* `target_pos` — Threat / target world position @*param* `speed` — Movement speed (default: self.pursuit_speed or self.walk_speed or 3.0) @*return* `success` — True if a safe retreat direction was found and applied |
+| `register_pathfinding_mob` | `function MobAISubsystem.register_pathfinding_mob(name: string, def: MobRegistrationDef)` | Entity Registration Helper Wraps standard mob definition with optimized pathfinding motor controller @*param* `name` — Entity technical name (e.g. "x_mobs:smart_zombie") @*param* `def` — Entity definition table |
 | `scan_for_player` | `function MobAISubsystem.scan_for_player(self: table, scan_radius?: number, eye_height?: number)   -> nearest_player: ObjectRef\|nil   2. nearest_dist: number\|nil` | Scans for the nearest valid living player within range and direct line of sight @*param* `self` — Mob instance @*param* `scan_radius` — Max search radius (default: self.aggro_radius or 16.0) @*param* `eye_height` — Mob eye height offset (default: self.eye_offset or 1.5) |
 | `step_move_or_idle` | `function MobAISubsystem.step_move_or_idle(self: table, dtime: number, move_anim?: string, anim_speed?: number, idle_anim?: string)   -> nav: table\|nil` | Updates navigation movement and dispatches walk/run or idle animation @*param* `self` — Mob instance @*param* `dtime` — Step delta time @*param* `move_anim` — Movement animation (default: "walk") @*param* `anim_speed` — Animation speed (default: 1.0) @*param* `idle_anim` — Idle animation (default: "idle") @*return* `nav` — Navigation state |
 | `step_wander_or_idle` | `function MobAISubsystem.step_wander_or_idle(self: table, dtime: number, walk_anim?: string, idle_anim?: string)   -> table\|nil` | Executes wander navigation or idle holding when no active target is present @*param* `self` — Mob instance @*param* `dtime` — Step delta time @*param* `walk_anim` — Custom walk animation name (default: "walk") @*param* `idle_anim` — Custom idle animation name (default: "idle") |
-| `try_open_door` | `function` |  |
-| `try_open_door_at_pos` | `function` |  |
 | `update_navigation` | `function MobAISubsystem.update_navigation(self: table, dtime: number)   -> status: table` | Updates entity navigation, scanning, line-of-sight, and path execution @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*return* `status` — Locomotion status {moving = boolean, speed = number, has_los = boolean} |
 
 ### `MobAnimationDef`
@@ -261,6 +377,14 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `loop` | `boolean?` | Whether to loop animation by default |
 | `speed` | `number?` | Playback speed multiplier (default: 1.0) |
 | `track` | `string` | Named glTF animation track |
+
+### `MobBoneDef`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `pivot` | `(Vector\|{ x: number, y: number, z: number })?` | Pivot offset for bone attachments and inverse kinematics |
+| `position` | `(Vector\|{ x: number, y: number, z: number })?` | Bone position offset |
+| `rotation` | `(Vector\|{ x: number, y: number, z: number })?` | Default bone orientation rotation |
 
 ### `MobHealthBarColorBand`
 
@@ -288,51 +412,237 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `visual_size` | `Vector2d?` | Explicit sprite visual size override in world coordinates |
 | `width` | `integer?` | Texture width in pixels (default: 64) |
 
+### `MobImmunitiesDef`
+
+| Field | Type | Description |
+| `damage_per_second` | `boolean?` | Immune to node damage_per_second |
+| `drown` | `boolean?` | Immune to water drowning |
+| `environment` | `boolean?` | Immune to all ambient environmental hazard node DPS |
+| `fire` | `boolean?` | Immune to fire and igniter damage |
+| `lava` | `boolean?` | Immune to lava damage |
+| `suffocation` | `boolean?` | Immune to solid block asphyxiation |
+
+### `MobInitialPropertiesDef`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `automatic_rotate` | `number?` | Continuous Y-axis rotation speed in radians/sec |
+| `backface_culling` | `boolean?` | Whether backfaces of the 3D model are culled (default: true) |
+| `collide_with_objects` | `boolean?` | Whether entity collides with other entities and players (default: true) |
+| `collisionbox` | `number[]?` | 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz} |
+| `damage_texture_modifier` | `string?` | Texture modifier applied when entity takes damage |
+| `eye_height` | `number?` | Engine eye elevation in nodes |
+| `glow` | `integer?` | Light emission level in dark environments 0..14 (default: 0) |
+| `hp_max` | `number?` | Maximum health points (synced to ObjectRef properties and engine HP) |
+| `infotext` | `string?` | Tooltip text displayed when player points at the entity |
+| `makes_footstep_sound` | `boolean?` | Whether movement plays footstep audio (default: true unless floating) |
+| `mesh` | `string?` | 3D model mesh filename (.glb, .gltf, or .b3d) |
+| `nametag` | `string?` | Overhead nametag text |
+| `nametag_bgcolor` | `(string\|table)?` | Nametag background color |
+| `nametag_color` | `(string\|table)?` | Nametag text color |
+| `physical` | `boolean?` | Whether entity is subject to physical collisions (default: true) |
+| `pointable` | `boolean?` | Whether entity can be pointed at or punched (default: true) |
+| `selectionbox` | `(table\|number[])?` | 6-element selection box: {minx, miny, minz, maxx, maxy, maxz} |
+| `shaded` | `boolean?` | Whether mesh is affected by world lighting (default: true) |
+| `show_on_minimap` | `boolean?` | Whether entity appears on player minimap |
+| `static_save` | `boolean?` | Whether entity persists in block static data across server restarts (default: true) |
+| `stepheight` | `number?` | Maximum step-up height in nodes (default: 1.1) |
+| `textures` | `string[]?` | List of texture filenames or texture modifier strings |
+| `use_texture_alpha` | `(boolean\|string)?` | Texture alpha transparency mode (true, false, "clip", "blend", "opaque") |
+| `visual` | `("cube"\|"mesh"\|"sprite")?` | Visual rendering mode (default: "mesh" if mesh is specified) |
+| `visual_size` | `(Vector\|Vector2d\|{ x: number, y: number, z: number })?` | Visual model scale factors |
+| `zoom_fov` | `number?` | Camera zoom field of view in degrees |
+
+### `MobMemoryDangerRecord`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `active` | `boolean` | Whether danger slot is populated |
+| `expire` | `number` | Expiration timestamp |
+| `threat` | `number` | Threat intensity score |
+| `x` | `number` | Danger position X coordinate |
+| `y` | `number` | Danger position Y coordinate |
+| `z` | `number` | Danger position Z coordinate |
+
+### `MobMemoryState`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `blocked_spots` | `table[]` | Obstruction memory for deadlock evasion |
+| `dangers` | `MobMemoryDangerRecord[]` | Pre-allocated circular buffer of active pain/danger positions |
+| `fight` | `table` | Combat location memory for return-to-fight logic |
+| `flee_state` | `boolean` | Whether entity is currently in low-HP tactical retreat |
+| `regen_timer` | `number` | Elapsed time during low-HP passive health regeneration |
+| `target` | `MobMemoryTargetRecord` | Single predictive target pursuit record (8-second LKP) |
+| `trail` | `table[]` | Pre-allocated circular buffer of recent positions for anti-oscillation |
+
 ### `MobMemorySubsystem`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `broadcast_alert` | `function MobMemorySubsystem.broadcast_alert(self: table, alert_pos: Vector, threat?: number, radius?: number, max_allies?: number)   -> alerted_count: integer` | Broadcasts a swarm alert to nearby allies of the same species Configurable via self.swarm_alert = {enabled = true, radius = 10.0, max_allies = 3} @*param* `self` — Entity instance sending the alert @*param* `alert_pos` — Position of the threat @*param* `threat` — Threat magnitude (default: 5.0) @*param* `radius` — Alert radius in nodes (default: 10.0) @*param* `max_allies` — Maximum allies to alert (default: 3) @*return* `alerted_count` — Number of allies alerted |
+| `broadcast_alert` | `function MobMemorySubsystem.broadcast_alert(self: table, alert_pos: Vector, threat?: number, radius?: number, max_allies?: number)   -> alerted_count: integer` | Broadcasts a swarm alert to nearby allies of the same species. Injects danger threat records and `"swarm_alert"` coordinate memory into idle allies, prompting them to navigate to and investigate the disturbance location even without direct line of sight. Invoked automatically alongside `coordination.broadcast_threat` when `def.swarm_alert` is configured. Configurable via self.swarm_alert = {enabled = true, radius = 10.0, max_allies = 3} @*param* `self` — Entity instance sending the alert @*param* `alert_pos` — Position of the threat @*param* `threat` — Threat magnitude (default: 5.0) @*param* `radius` — Alert radius in nodes (default: 10.0) @*param* `max_allies` — Maximum allies to alert (default: 3) @*return* `alerted_count` — Number of allies alerted |
 | `clear_danger_memory` | `function MobMemorySubsystem.clear_danger_memory(self: table)` | Clears all active danger memories (used on combat re-engagement or panic exit) @*param* `self` — Entity instance |
+| `clear_fight_pos` | `function MobMemorySubsystem.clear_fight_pos(self: table)` | Clears fight memory explicitly @*param* `self` — Entity instance |
 | `clear_target_memory` | `function MobMemorySubsystem.clear_target_memory(self: table)` | Clears target memory explicitly @*param* `self` — Entity instance |
 | `clear_unreachable_target` | `function MobMemorySubsystem.clear_unreachable_target(self: table, target_obj: ObjectRef)` | Clears unreachable status for a target (e.g. when punched by that target) @*param* `self` — Entity instance @*param* `target_obj` — Target player or entity |
 | `evaluate_heading_bias` | `function MobMemorySubsystem.evaluate_heading_bias(self: table, candidate_dir: Vector, current_pos: Vector, current_time?: number)   -> score: number` | Evaluates a candidate movement direction against danger, novelty, and blocked memory Returns a scalar fitness score (higher is better) Utilizes a zero-allocation heading evaluation cache to avoid duplicate vector and sqrt computations @*param* `self` — Entity instance @*param* `candidate_dir` — Candidate heading direction (normalized) @*param* `current_pos` — Current mob position @*param* `current_time` — Current timestamp @*return* `score` — Fitness score |
 | `get_danger_repulsion_vector` | `function MobMemorySubsystem.get_danger_repulsion_vector(self: table, current_pos: Vector, current_time?: number)   -> repulsion: Vector` | Calculates a spatial repulsion vector away from all active danger spots Uses inverse-square distance weighting @*param* `self` — Entity instance @*param* `current_pos` — Current mob position @*param* `current_time` — Current timestamp @*return* `repulsion` — Normalized 3D repulsive vector or {x=0, y=0, z=0} |
 | `get_exploration_bias_vector` | `function MobMemorySubsystem.get_exploration_bias_vector(self: table, current_pos: Vector)   -> novelty: Vector` | Calculates an exploration novelty vector pointing away from recently visited positions Prevents ping-pong oscillations in corridors and dead ends @*param* `self` — Entity instance @*param* `current_pos` — Current mob position @*return* `novelty` — Normalized 3D exploration vector or {x=0, y=0, z=0} |
+| `get_fight_pos` | `function MobMemorySubsystem.get_fight_pos(self: table, current_time?: number)   -> fight_pos: Vector\|nil` | Retrieves active fight location if not expired @*param* `self` — Entity instance @*param* `current_time` — Current timestamp @*return* `fight_pos` — Coordinates of the fight or nil |
 | `get_lkp_target` | `function MobMemorySubsystem.get_lkp_target(self: table, max_age?: number, current_time?: number)   -> lkp: Vector\|nil` | Retrieves active Last Known Position if within the 8.0s pursuit window @*param* `self` — Entity instance @*param* `max_age` — Maximum age in seconds (default: 8.0) @*param* `current_time` — Current timestamp @*return* `lkp` — Last known position or nil if expired |
 | `init_memory` | `function MobMemorySubsystem.init_memory(self: table)   -> table` | Initializes a zero-allocation working memory buffer on an entity instance @*param* `self` — Entity instance |
 | `is_target_unreachable` | `function MobMemorySubsystem.is_target_unreachable(self: table, target_obj: ObjectRef, current_time?: number)   -> is_unreachable: boolean` | Checks if a target is currently marked as unreachable @*param* `self` — Entity instance @*param* `target_obj` — Target player or entity @*param* `current_time` — Current timestamp @*return* `is_unreachable` — True if target is unreachable and on cooldown |
 | `record_blocked_spot` | `function MobMemorySubsystem.record_blocked_spot(self: table, blocked_pos: Vector, duration?: number, current_time?: number)` | Records a blocked position or cliff deadlock @*param* `self` — Entity instance @*param* `blocked_pos` — Position that could not be traversed @*param* `duration` — Duration in seconds (default: 8.0) @*param* `current_time` — Current timestamp |
 | `record_danger` | `function MobMemorySubsystem.record_danger(self: table, danger_pos: Vector, threat_level: number, duration?: number, current_time?: number)` | Records a danger source (damage taken, enemy position, hazard) @*param* `self` — Entity instance @*param* `danger_pos` — World coordinates of the threat @*param* `threat_level` — Magnitude of the threat (e.g. damage amount) @*param* `duration` — Duration in seconds before expiration (default: 12.0) @*param* `current_time` — Current timestamp |
+| `record_fight_pos` | `function MobMemorySubsystem.record_fight_pos(self: table, fight_pos: Vector, duration?: number, current_time?: number)` | Records a combat / fight location @*param* `self` — Entity instance @*param* `fight_pos` — World coordinates of the fight @*param* `duration` — Duration in seconds before expiration (default: 45.0) @*param* `current_time` — Current timestamp |
 | `record_target_sighting` | `function MobMemorySubsystem.record_target_sighting(self: table, target_obj: ObjectRef, target_pos: Vector, current_time?: number)` | Records or updates target sighting and Last Known Position @*param* `self` — Entity instance @*param* `target_obj` — Target player or entity @*param* `target_pos` — Target position @*param* `current_time` — Optional current time or timestamp |
 | `record_trail_step` | `function MobMemorySubsystem.record_trail_step(self: table, current_pos: Vector, dtime: number, current_time?: number)` | Records a visited world position into the circular trail buffer Throttled to 1.0s intervals to minimize samples @*param* `self` — Entity instance @*param* `current_pos` — Current mob position @*param* `dtime` — Step delta time @*param* `current_time` — Current timestamp |
 | `record_unreachable_target` | `function MobMemorySubsystem.record_unreachable_target(self: table, target_obj: ObjectRef, duration?: number, current_time?: number)` | Records a target as temporarily unreachable (e.g. across impassable water or chasm) @*param* `self` — Entity instance @*param* `target_obj` — Target player or entity @*param* `duration` — Duration in seconds before re-evaluating (default: 12.0) @*param* `current_time` — Current timestamp |
 | `update_health_regen` | `function MobMemorySubsystem.update_health_regen(self: table, dtime: number, flee_ratio?: number, return_ratio?: number, regen_rate?: number)   -> is_fleeing: boolean` | Updates low-HP tactical fleeing and passive health regeneration When HP recovers to return threshold, exits fleeing state @*param* `self` — Entity instance @*param* `dtime` — Step delta time @*param* `flee_ratio` — HP ratio to enter fleeing (default: 0.25) @*param* `return_ratio` — HP ratio to exit fleeing (default: 0.60) @*param* `regen_rate` — HP regenerated per second while fleeing (default: 0.5) @*return* `is_fleeing` — Whether the mob is currently in fleeing state |
 
+### `MobMemoryTargetRecord`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `has_record` | `boolean` | Whether target memory slot is populated |
+| `last_seen` | `number` | Timestamp of last target sighting |
+| `lkp` | `Vector` | Last known 3D position vector |
+| `name` | `string` | Entity name of remembered target |
+
 ### `MobPackDef`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `follower_type` | `string?` | Expected entity name of the followers |
+| `auto_succession` | `boolean?` | Whether surviving followers promote new leader on death (default: false) |
+| `follower_type` | `(string\|string[])?` | Expected entity name or list of entity names of the followers |
 | `leader_type` | `string?` | Expected entity name of the leader |
 | `leash_distance` | `number?` | Distance before followers regroup (default: 18.0) |
 | `max_followers` | `integer?` | Max followers for a leader (default: 3) |
+| `on_leader_lost` | `("fight"\|"flee"\|fun(self: table, leader?: table))?` | Callback or behavior when pack leader dies |
 | `pack_id` | `string?` | Optional existing pack UUID |
 | `regroup_distance` | `number?` | Target distance when regrouping to leader (default: 4.0) |
 | `role` | `("leader"\|"member")?` | Role within the pack |
 | `spawn_on_init` | `boolean?` | Whether leader auto-spawns initial followers on activate |
+| `swarm_alert` | `(boolean\|SwarmAlertDef)?` | Declarative pack & faction rally configuration on damage and death |
 
 ### `MobRegistrationDef`
 
+Complete mob entity registration specification, physical properties,
+combat tuning, AI navigation, and lifecycle callback configuration.
+
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `armor_groups` | `table<string, number>?` | Luanti armor groups (e.g. {fleshy = 80}) |
-| `faction` | `(string\|string[])?` | Faction tag or list of faction tags (default: "monsters") |
-| `factions` | `(string\|string[])?` | Alias for faction |
+| `abilities` | `table?` | Optional explicit abilities configuration table overrides |
+| `aggro_radius` | `number?` | Player and target detection range in nodes (default: 16.0) |
+| `air_grace_period` | `number?` | Seconds before beached aquatic mob suffocates on land (default: 5.0) |
+| `amphibious` | `boolean?` | Whether mob is amphibious (immune to both drowning and beach suffocation) |
+| `animations` | `table<string, string\|MobAnimationDef>?` | Declarative glTF skeletal animations map |
+| `aquatic` | `boolean?` | Whether entity is strictly aquatic (swims in water, suffocates on land) |
+| `armor_groups` | `table<string, number>?` | Luanti armor groups (e.g. {fleshy = 80, cracky = 70}) |
+| `attack_interval` | `number?` | Cooldown between attacks in seconds (default: 1.2) |
+| `attack_range` | `number?` | Melee attack reach in nodes (default: 2.0) |
+| `auto_scan` | `boolean?` | Whether mob automatically scans for nearby player targets (default: true) |
+| `automatic_rotate` | `number?` | Continuous Y-axis rotation speed in radians/sec |
+| `backface_culling` | `boolean?` | Whether backfaces of the 3D model are culled (default: true) |
+| `block_suffocation_dps` | `number?` | Damage per second when head is buried inside solid block (default: 2) |
+| `bones` | `table<string, MobBoneDef>?` | Bone attachment pivots and structural metadata map |
+| `breath_max` | `number?` | Breath holding duration in seconds before drowning begins (default: 15.0) |
+| `can_breathe` | `boolean?` | Whether entity breathes air (false for aquatic mobs) |
+| `can_breathe_water` | `boolean?` | Whether terrestrial mob can breathe underwater without drowning |
+| `can_climb` | `boolean?` | Whether entity climbs ladders, vines, and walls (default: false) |
+| `can_crawl` | `boolean?` | Whether entity navigates 1-block crawlways and ceilings (default: false) |
+| `can_flinch` | `(boolean\|fun(self: table):boolean)?` | Whether mob flinches on punch (default: true) |
+| `can_fly_in_water` | `boolean?` | Whether aquatic mob flies/glides in water |
+| `can_open_doors` | `boolean?` | Whether entity opens wooden doors in its path (default: false) |
+| `can_swim` | `boolean?` | Whether entity navigates liquid bodies (default: true) |
+| `can_wander` | `boolean?` | Whether entity wanders when idle (default: true) |
+| `collide_with_objects` | `boolean?` | Whether entity collides with other entities and players (default: true) |
+| `collisionbox` | `number[]?` | 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz} |
+| `combat_hover_offset` | `number?` | Desired hovering elevation above ground during combat in nodes (default: 0.35) |
+| `combat_standoff` | `number?` | Desired horizontal standoff distance in front of target in combat (default: 1.4) |
+| `cooldowns` | `table<string, number>?` | Initial named cooldown timers in seconds (decremented per tick) |
+| `custom_states` | `table<string, CustomStateDef>?` | Custom state machine states map |
+| `custom_step` | `(fun(self: table, dtime: number, moveresult?: table, def?: table):boolean\|nil)?` | Pre-combat custom ability hook (return true to intercept) |
+| `damage` | `number?` | Base melee strike damage dealt to targets (default: 4) |
+| `damage_effect` | `(boolean\|string\|DamageEffectDef)?` | Directional hit particle feedback (false or "none" disables) |
+| `damage_texture_modifier` | `string?` | Engine texture modifier applied when entity takes damage |
+| `death_duration` | `number?` | Duration before entity removal on death in seconds (default: 1.5) |
+| `despawn` | `boolean?` | Enables or disables distance despawning (default: true) |
+| `despawn_conditions` | `DespawnConditionsDef?` | Granular despawn triggers (daylight, time-of-day ranges) |
+| `despawn_in_daylight` | `boolean?` | Despawns mob in daytime sunlight without drops (default: false) |
+| `despawn_natural_light` | `integer?` | Minimum natural sunlight level to trigger daylight despawn (default: 11) |
+| `despawn_timer` | `number?` | Sustained duration in seconds far from players before despawning (default: 45.0) |
+| `drop_options` | `DropOptions?` | Physics, launch arc, particle trail, and sound overrides for mob drops |
+| `drops` | `(string\|DropEntryDef)[]?` | Declarative loot drop table spawned on defeat |
+| `drowning_dps` | `number?` | Damage per second when drowning underwater (default: 2) |
+| `eye_height` | `number?` | Engine eye elevation in nodes |
+| `eye_offset` | `number?` | Eye level offset in nodes (default: collisionbox top * 0.85) |
+| `factions` | `(string\|string[])?` | Faction tag or list of faction tags (default: "monsters") |
+| `flee_speed` | `number?` | Tactical fleeing speed when low on health (default: walk_speed * 1.6) |
+| `flight_elevation` | `number?` | Desired flight cruising elevation above ground or anchor in nodes (default: hover_offset or 1.85) |
 | `friendly_fire` | `boolean?` | Whether allies/same-faction can damage this mob (default: false) |
-| `initial_properties` | `table` | Luanti ObjectRef properties (hp_max, collisionbox, mesh, visual_size, textures, etc.) |
+| `get_staticdata` | `(fun(self: table):string\|table)?` | Callback returning serialized state for persistence |
+| `glow` | `integer?` | Light emission level in dark environments 0..14 (default: 0) |
+| `half_width` | `number?` | Collision half-width for lateral obstacle clearance (default: 0.4) |
+| `health_bar` | `(boolean\|MobHealthBarConfig)?` | Overhead combat health bar configuration (false disables) |
+| `health_regen` | `(boolean\|number\|HealthRegenDef)?` | Health regen rate, disable toggle, or config table |
+| `hooks` | `table<string, fun(self: table, ...any)>?` | Lifecycle hook callbacks |
+| `hover_offset` | `number?` | Desired hovering elevation above ground for floating mobs in nodes (default: 0.4) |
+| `hp_max` | `number?` | Maximum health points (synced to ObjectRef properties and engine HP, default: 20) |
+| `immunities` | `MobImmunitiesDef?` | Environmental hazard immunities table |
+| `infotext` | `string?` | Tooltip text displayed when player points at the entity |
+| `initial_properties` | `(table\|MobInitialPropertiesDef)?` | Luanti ObjectRef properties table (hp, mesh, boxes, etc.) |
+| `is_aquatic` | `boolean?` | Whether entity is strictly aquatic (swims in water, suffocates on land) |
+| `is_floating` | `boolean?` | Whether entity hovers in mid-air with zero-gravity locomotion (default: false) |
 | `knockback_mult` | `number?` | Knockback impulse multiplier (0 for unyielding/immune, default: 1.5) |
-| `textures` | `(string\|(string[])[]\|string[])?` | Texture or variations list (preferred in initial_properties) |
+| `makes_footstep_sound` | `boolean?` | Whether walking plays footstep audio (default: true unless floating) |
+| `max_angular_speed` | `number?` | Maximum turning rotation speed in radians/sec (default: 4.0) |
+| `melee` | `(boolean\|MeleeConfigDef)?` | Declarative melee combat configuration (false disables) |
+| `mesh` | `string?` | 3D model mesh filename (.glb, .gltf, or .b3d) |
+| `mob_height` | `number?` | Height in nodes (derived from collisionbox if omitted) |
+| `mob_type` | `(string\|"animal"\|"aquatic"\|"monster")?` | Alternative entity category classifier |
+| `name` | `string?` | Technical entity name (e.g. "x_mobs:spider", "mymod:golem") |
+| `nametag` | `string?` | Overhead nametag text |
+| `nametag_bgcolor` | `(string\|table)?` | Overhead nametag background color |
+| `nametag_color` | `(string\|table)?` | Overhead nametag text color |
+| `on_action_end` | `fun(self: table)?` | Callback executed when action_timer completes |
+| `on_activate` | `fun(self: table, staticdata: string\|table, dtime_s: number, raw?: string)?` | Called on activation |
+| `on_deactivate` | `fun(self: table, removal: boolean)?` | Called when entity is unloaded or removed |
+| `on_death` | `fun(self: table, killer: ObjectRef\|nil)?` | Callback invoked when entity dies |
+| `on_despawn` | `fun(self: table, reason?: string)?` | Callback when entity despawns gracefully |
+| `on_hurt` | `fun(self: table, puncher: ObjectRef\|nil, damage: number)?` | Callback invoked on taking damage |
+| `on_punch` | `fun(self: table, puncher: ObjectRef, tflp: number, tool_caps: table, dir: Vector, damage: number)?` |  |
+| `on_regen_step` | `fun(self: table, hp_added: number)?` | Optional callback executed on each health regeneration step |
+| `on_return_to_fight` | `fun(self: table)?` | Optional callback executed when mob recovers HP and exits fleeing |
+| `on_rightclick` | `(fun(self: table, clicker: ObjectRef):any)?` | Callback invoked when entity is right-clicked |
+| `on_step` | `fun(self: table, dtime: number, moveresult?: table)?` | Callback on each physics/logic step |
+| `pack` | `MobPackDef?` | Pack and squad coordination options |
+| `perform_attack` | `fun(self: table, target: ObjectRef, dir: Vector)?` | Custom melee attack callback |
+| `physical` | `boolean?` | Whether entity is subject to physical collisions (default: true) |
+| `pointable` | `boolean?` | Whether entity can be pointed at or punched (default: true) |
+| `pursuit_speed` | `number?` | Running pursuit speed in nodes/sec (default: walk_speed * 1.4) |
+| `scan_interval` | `number?` | Frequency of target scanning in seconds (default: 0.4) |
+| `selectionbox` | `(table\|number[])?` | 6-element selection box: {minx, miny, minz, maxx, maxy, maxz} |
+| `shaded` | `boolean?` | Whether mesh is shaded by world lighting (default: true) |
+| `shoal` | `ShoalConfigDef?` | Fish schooling, 3D boundary avoidance, and anchor steering configuration |
+| `shooter` | `ShooterConfigDef?` | Ranged combat, projectile firing, and kiting configuration |
+| `show_on_minimap` | `boolean?` | Whether entity icon appears on player minimap |
+| `sounds` | `(string\|MobSoundDef)?` | Acoustic sound feedback configuration |
+| `static_save` | `boolean?` | Whether entity persists in block static data across server restarts (default: true) |
+| `stepheight` | `number?` | Maximum step-up height in nodes (default: 1.1) |
+| `suffocation_dps` | `number?` | Damage per second when beached out of water (default: 4) |
+| `swarm` | `SwarmConfigDef?` | Swarm intelligence, 3D flocking, and vortex combat configuration |
+| `swarm_alert` | `(boolean\|SwarmAlertDef)?` | Declarative pack & faction rally configuration on damage and death |
+| `textures` | `(string\|(string[])[]\|string[])?` | Texture filename, list of textures, or phenotype variations |
+| `transitions` | `StateTransitionDef[]?` | Declarative state transition rules |
+| `type` | `(string\|"aquatic"\|"flying"\|"terrestrial")?` | Locomotion archetype classifier |
+| `use_texture_alpha` | `(boolean\|string)?` | Texture alpha transparency mode (true, false, "clip", "blend", "opaque") |
+| `visual` | `("cube"\|"mesh"\|"sprite")?` | Visual rendering mode (default: "mesh" if mesh is specified) |
+| `visual_size` | `(Vector\|Vector2d\|{ x: number, y: number, z: number })?` | Visual model scale factors |
+| `walk_speed` | `number?` | Base walking speed in nodes/sec (default: 2.5) |
+| `wander_radius` | `number?` | Maximum wandering patrol radius in nodes (default: 10.0) |
+| `wander_speed` | `number?` | Wandering patrol speed in nodes/sec (default: walk_speed * 0.6) |
+| `zoom_fov` | `number?` | Camera zoom field of view in degrees |
 
 ### `MobSoundDef`
 
@@ -342,12 +652,75 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `attack` | `(string\|SoundConfigDef)?` | Sound played on melee or ranged strike |
 | `base` | `string?` | Default sound-group name used as fallback for all categories |
 | `death` | `(string\|SoundConfigDef)?` | Sound played on lethal damage |
-| `distance` | `number?` | Global default hear distance in nodes (default: 24.0) |
+| `distance` | `number?` | Global default hear distance in nodes (default: 16.0) |
 | `gain` | `number?` | Global default volume multiplier (default: 1.0) |
 | `hurt` | `(string\|SoundConfigDef)?` | Sound played on non-lethal damage |
-| `max_hear_distance` | `number?` | Alias for distance in nodes |
 | `pitch_jitter` | `number?` | Global default pitch jitter factor (default: 0.05) |
 | `random` | `(string\|SoundConfigDef)?` | Periodic ambient sound played during wander/idle |
+| `shoot` | `(string\|SoundConfigDef)?` | Sound played when firing a ranged projectile |
+| `smash` | `(string\|SoundConfigDef)?` | Sound played on heavy ground smash impact |
+| `summon` | `(string\|SoundConfigDef)?` | Sound played when summoning minions or pack followers |
+
+### `MobStateContext`
+
+Mob entity execution context passed as `self` across state machine callbacks and hooks.
+Provides developers direct access to engine references, state variables, timers, memory, and locomotion.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `action_timer` | `number?` | Duration remaining for uninterruptible action; locks standard locomotion while > 0 |
+| `aggro_radius` | `number?` | Maximum distance to detect hostile targets |
+| `attack_cooldown` | `number?` | Global melee/combat attack cooldown timer |
+| `attack_range` | `number?` | Maximum distance to initiate melee attack |
+| `can_climb` | `boolean?` | Whether mob can climb ladders/vines |
+| `can_crawl` | `boolean?` | Whether mob can crawl through 1-node high spaces |
+| `can_flinch` | `(fun(self: MobStateContext):boolean)?` | Custom hyper-armor/poise predicate |
+| `can_open_doors` | `boolean?` | Whether mob can open wooden doors |
+| `can_swim` | `boolean?` | Whether mob can traverse liquid nodes |
+| `can_wander` | `boolean?` | Whether mob is permitted to wander autonomously |
+| `combat_hover_offset` | `number?` | Target elevation offset above ground during combat |
+| `combat_standoff` | `number?` | Desired horizontal standoff distance in combat |
+| `cooldowns` | `table<string, number>?` | Named ability cooldown timers |
+| `custom_states` | `table<string, CustomStateDef>?` | Map of registered custom states |
+| `damage` | `number?` | Base melee attack damage dealt |
+| `eye_offset` | `number?` | Vertical offset from base to eye level in nodes |
+| `faction_list` | `string[]?` | Ordered list of faction names |
+| `factions` | `table<string, boolean>?` | Set of faction identifiers |
+| `flee_speed` | `number?` | Panic escape velocity |
+| `friendly_fire` | `boolean?` | Whether entity attacks/damages friendly faction members |
+| `half_width` | `number?` | Half-width bounding box dimension in nodes |
+| `hover_offset` | `number?` | Target elevation offset above ground or water |
+| `is_dead` | `boolean` | Flag indicating whether the entity is dead or dying |
+| `is_floating` | `boolean?` | Whether gravity is disabled (flying/swimming) |
+| `knockback_mult` | `number?` | Resistance multiplier to incoming kinetic knockback |
+| `lost_sight_timer` | `number?` | Seconds elapsed since losing direct line of sight to target |
+| `memory` | `MobMemoryState?` | Short-term tactical memory buffer (LKP, threats, repulsion, trail) |
+| `mob_height` | `number?` | Mob height in nodes |
+| `name` | `string` | Technical registered entity name (e.g. "x_mobs:golem") |
+| `object` | `ObjectRef` | Luanti engine C++ userdata pointer representing the active entity |
+| `on_action_end` | `fun(self: MobStateContext)?` | Invoked when action_timer reaches 0 |
+| `on_return_to_fight` | `fun(self: MobStateContext)?` | Invoked when recovering from flee state |
+| `pack_id` | `string?` | UUID of the squad/pack if participating in pack coordination |
+| `pack_leader` | `ObjectRef?` | Reference to the squad leader entity |
+| `panic_timer` | `number?` | Duration remaining for panic flee state |
+| `path_state` | `table?` | Pathfinding waypoints and traversal state |
+| `pursuit_speed` | `number?` | Combat chase velocity |
+| `scan_timer` | `number?` | Throttle timer for periodic target scanning |
+| `set_cooldown` | `fun(self: MobStateContext, key: string, duration: number)` | Helper to set ability cooldown |
+| `sounds` | `(string\|MobSoundDef)?` | Sound configuration or sound group name |
+| `state` | `string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+6)` | Current active state identifier |
+| `target` | `ObjectRef?` | Currently acquired hostile or pursuit target |
+| `walk_speed` | `number?` | Standard walking velocity |
+| `wander_radius` | `number?` | Maximum radius from anchor for wandering |
+| `wander_speed` | `number?` | Ambient wandering velocity |
+
+### `NodeCacheSubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `clear` | `function NodeCacheSubsystem.clear()` | Clears the per-step node caches |
+| `get_node` | `function NodeCacheSubsystem.get_node(pos: Vector)   -> node: table` | Retrieves node table from per-step cache or queries engine @*param* `pos` — Node world position @*return* `node` — Node definition table {name: string, param1: number, param2: number} |
+| `get_node_or_nil` | `function NodeCacheSubsystem.get_node_or_nil(pos: Vector)   -> node: table\|nil` | Retrieves node table or nil from per-step cache or queries engine @*param* `pos` — Node world position @*return* `node` — Node definition table {name: string, param1: number, param2: number} or nil |
 
 ### `PathCache`
 
@@ -370,26 +743,39 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `allow_allies` | `boolean?` | If true, permits colliding with and damaging faction allies |
-| `allow_players` | `boolean?` | If false, ignores players during collision raycasts (default: true) |
-| `damage` | `number?` | Impact damage dealt to entity if self._damage is unset (default: 5) |
-| `ignore_entities` | `(string[]|table<string, boolean>)?` | Specific entity names to ignore |
-| `lifetime` | `number?` | Maximum flight duration before expiration (default: 4.0) |
-| `on_hit` | `fun(self: table, hit_obj: ObjectRef?, hit_pos: Vector)?` | General impact callback called for any hit |
-| `on_hit_node` | `fun(self: table, hit_pos: Vector, node: table)?` | Callback triggered when impacting a solid node |
-| `on_hit_object` | `fun(self: table, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector)?` | Custom object punch callback |
-| `on_step` | `fun(self: table, dtime: number, pos: Vector)?` | Step callback triggered every frame during flight |
-| `radius` | `number?` | Proximity collision fallback radius in nodes (default: 1.5) |
-| `remove_on_hit` | `boolean?` | Whether to remove projectile entity on impact (default: true) |
-| `rotate` | `boolean?` | Whether to automatically orient visual model along velocity vector (default: true) |
+| `allow_allies` | `boolean?` | Whether friendly/allied entities can be hit (default: false) |
+| `allow_players` | `boolean?` | Whether players are valid targets (default: true) |
+| `damage` | `number?` | Damage applied when impacting target without on_hit_object (default: self._damage or 5) |
+| `ignore_entities` | `(string[]\|table<string, boolean>)?` | Additional entity technical names to ignore |
+| `lifetime` | `number?` | Maximum projectile lifetime in seconds before removal (default: 4.0) |
+| `on_hit` | `fun(self: table, hit_obj: ObjectRef\|nil, hit_pos: Vector)?` | Callback executed on any impact |
+| `on_hit_node` | `fun(self: table, hit_pos: Vector, node: table)?` | Callback when hitting a solid node |
+| `on_hit_object` | `fun(self: table, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector)?` | Object hit callback |
+| `on_step` | `fun(self: table, dtime: number, pos: Vector)?` | Callback executed on every unobstructed flight step |
+| `radius` | `number?` | Proximity fallback collision radius in nodes (default: 1.5) |
+| `remove_on_hit` | `boolean?` | Whether to remove projectile entity upon impact (default: true) |
+| `rotate` | `boolean?` | Whether to automatically rotate projectile along velocity vector (default: true) |
 
 ### `ProjectileTargetOptions`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `allow_allies` | `boolean?` | If true, permits targeting faction allies (default: false) |
-| `allow_players` | `boolean?` | If false, ignores human players (default: true) |
-| `ignore_entities` | `(string[]|table<string, boolean>)?` | Technical entity names to ignore (e.g. {"x_mobs:archer_arrow"}) |
+| `allow_allies` | `boolean?` | Whether friendly/allied entities can be hit (default: false) |
+| `allow_players` | `boolean?` | Whether players are valid targets (default: true) |
+| `ignore_entities` | `(string[]\|table<string, boolean>)?` | Additional entity technical names to ignore |
+
+### `SafetySubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `check_corridor_line_of_sight` | `function SafetySubsystem.check_corridor_line_of_sight(pos: Vector, target_pos: Vector, eye_offset?: number, half_width?: number)   -> is_clear: boolean` | Volumetric multi-ray corridor check to determine if a direct straight-line path is clear. Checks eye-level, torso-level, and left/right lateral extents. If any obstacle blocks the corridor, direct path is obstructed and A* is required. @*param* `pos` — Mob base world position @*param* `target_pos` — Target world position @*param* `eye_offset` — Eye height offset above base pos @*param* `half_width` — Mob collision half-width (default 0.4) @*return* `is_clear` — True if entire corridor has unobstructed line of sight |
+| `check_ground_line_of_sight` | `function SafetySubsystem.check_ground_line_of_sight(pos: Vector, target_pos: Vector, abilities?: table)   -> has_ground: boolean   2. reason: string?` | Verifies that there is a continuous, safe ground path along the straight line between pos and target_pos (no chasms, deep cliffs, or un-swimmable water). @*param* `pos` — Mob position @*param* `target_pos` — Target position @*param* `abilities` — Mob abilities @*return* `has_ground` — True if continuous safe ground exists @*return* `reason` — Failure reason if not safe ("water", "cliff", "hazard", etc.) |
+| `check_in_liquid` | `function SafetySubsystem.check_in_liquid(pos: Vector, abilities?: table, mob_height?: number)   -> in_liquid: boolean   2. is_submerged: boolean   3. surface_y: number\|nil   4. target_vy: number` | Checks if entity is in liquid and calculates water surface and immersion level @*param* `pos` — World position @*param* `abilities` — Mob abilities table @*param* `mob_height` — Height of mob (default 1.5) @*return* `in_liquid` — True if in liquid and submerged or at waterline @*return* `is_submerged` — True if mob is submerged below target swimming waterline @*return* `surface_y` — Y elevation of topmost water surface in node column @*return* `target_vy` — Recommended vertical velocity to reach/maintain swimming depth |
+| `find_nearest_shore_pos` | `function SafetySubsystem.find_nearest_shore_pos(pos: Vector, max_radius?: number)   -> shore_pos: Vector\|nil` | Scans for the nearest dry, walkable shoreline position from a liquid location Uses expanding concentric box rings with early exit for maximum performance @*param* `pos` — Current world position in liquid @*param* `max_radius` — Maximum search radius in nodes (default: 16) @*return* `shore_pos` — Nearest dry walkable shore position or nil |
+| `init_abilities` | `function SafetySubsystem.init_abilities(self: table, def?: table)` | Initializes an entity's inherent abilities and active dynamic abilities table @*param* `self` — Entity instance @*param* `def` — Entity definition table |
+| `is_aquatic_mob` | `function SafetySubsystem.is_aquatic_mob(self: table)   -> is_aquatic: boolean` | Checks if a mob is strictly aquatic (shoal fish, shark, aquatic faction) @*param* `self` — Entity instance or mob definition table |
+| `is_step_safe` | `function SafetySubsystem.is_step_safe(pos: Vector, move_dir: Vector, abilities?: table, max_drop?: number)   -> is_safe: boolean   2. reason: string?` | Checks whether a step in the given horizontal direction is safe for a ground mob: - Detects cliffs (drops >= 3 blocks) - Detects un-swimmable liquid (water, river water) - Detects damaging hazard nodes (lava, fire) - Verifies 1-node step-up or direct ground footstep @*param* `pos` — Mob position @*param* `move_dir` — Horizontal direction vector {x, y, z} @*param* `abilities` — Mob abilities (can_swim, can_climb, can_crawl) @*param* `max_drop` — Maximum safe drop height (default 2) @*return* `is_safe` — True if the step is physically safe to take @*return* `reason` — Rejection reason if not safe ("wall", "cliff", "hazard", "water", "headroom") |
+| `is_valid_stand_pos` | `function SafetySubsystem.is_valid_stand_pos(pos: Vector)   -> is_valid: boolean` | Checks whether a world position is a valid, standing location (not inside a wall, has ground support) @*return* `is_valid` — True if pos is clear of walkable blocks and supported by ground |
 
 ### `ShoalConfigDef`
 
@@ -416,11 +802,11 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `get_boundary_repulsion` | `function` |  |
 | `get_collision_padding` | `function ShoalSubsystem.get_collision_padding(self: table, def: table)   -> pad: table` | Derives horizontal collision radius, diameter, height, and safe distance padding from entity collisionbox @*param* `self` — Mob instance @*param* `def` — Mob definition table @*return* `pad` — Collision padding parameters |
 | `get_vertical_containment` | `function` |  |
-| `get_water_column_bounds` | `function` |  |
+| `get_water_column_bounds` | `unknown` |  |
 | `init_entity` | `function ShoalSubsystem.init_entity(self: table, def: table, data: table)` | Initializes an entity's shoal role, index, and state on activation @*param* `self` — Mob instance @*param* `def` — Mob definition table @*param* `data` — Deserialized static data table |
-| `is_navigable_water` | `function` |  |
+| `is_navigable_water` | `unknown` |  |
 | `is_safe_deep_water` | `function` |  |
-| `is_water_node` | `function` |  |
+| `is_water_node` | `unknown` |  |
 | `on_action_end` | `function ShoalSubsystem.on_action_end(self: table, _def: table)` | Action end hook to transition attacking mobs back to swimming @*param* `self` — Mob instance @*param* `_def` — Mob definition table |
 | `perform_attack` | `function ShoalSubsystem.perform_attack(self: table, target: ObjectRef, dir: Vector, _def: table)` | Executes predatory school strike with animation, rostrum damage, and recoil @*param* `self` — Mob instance @*param* `target` — Target entity @*param* `dir` — Strike direction @*param* `_def` — Mob definition table |
 | `step` | `function ShoalSubsystem.step(self: table, dtime: number, def: table)   -> is_handled: boolean` | Master step dispatcher for schooling entities @*param* `self` — Mob instance @*param* `dtime` — Step delta time @*param* `def` — Mob definition table |
@@ -431,6 +817,42 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 ### `ShooterConfigDef`
 
+Declarative ranged combat, projectile firing, and tactical kiting configuration.
+When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
+distance acquisition, line-of-sight checks, tactical kiting/retreat, charge windup callbacks,
+velocity-based lead aim prediction, and projectile spawning.
+
+### How It Works:
+1. **Distance Acquisition**: Engages when target distance is between `min_range` and `range` with line-of-sight.
+2. **Tactical Kiting**: When target closes inside `min_range`, mob steers away at `retreat_speed`.
+3. **Charge & Windup**: Sets `action_timer = fire_duration`, plays `animation`, `sound`, and calls `on_charge`.
+4. **Aim Prediction**: After `fire_delay`, calculates lead trajectory if `predict_aim = true`.
+5. **Spawning & Launch**: Spawns `projectile`, sets flight velocity/rotation, and calls `on_shoot`.
+
+### Usage Example:
+```lua
+shooter = {
+    projectile = "x_mobs:spectrum_orb",
+    range = 16.0,
+    min_range = 4.0,
+    retreat_speed = 1.2,
+    velocity = 14.0,
+    damage = 6,
+    cooldown = 3.2,
+    fire_duration = 0.8,
+    fire_delay = 0.4,
+    predict_aim = true,
+    animation = "shoot",
+    sound = "shoot",
+    on_charge = function(self, pos)
+        -- Spawn windup charging VFX
+    end,
+    on_shoot = function(self, proj_obj, dir, origin)
+        -- Custom projectile setup
+    end,
+}
+```
+
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `animation` | `string?` | Animation track name played when shooting (default: "attack") |
@@ -439,6 +861,8 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `fire_delay` | `number?` | Delay before projectile is released in seconds (default: 0.4) |
 | `fire_duration` | `number?` | Duration mob holds shooting pose in seconds (default: 1.0) |
 | `min_range` | `number?` | Minimum distance threshold under which mob retreats (default: 0.0) |
+| `on_charge` | `fun(self: table, pos: Vector)?` | Callback executed during firing windup / charge |
+| `on_shoot` | `fun(self: table, proj_obj: ObjectRef, dir: Vector, origin: Vector)?` | Spawn callback |
 | `predict_aim` | `boolean?` | Whether to apply aim lead prediction based on target velocity (default: false) |
 | `projectile` | `string?` | Technical entity name of projectile (default: "x_mobs:archer_arrow") |
 | `range` | `number?` | Maximum firing range in nodes (default: def.attack_range or 15.0) |
@@ -454,7 +878,6 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `chance` | `number?` | Probability to play when interval expires (default: 1.0) |
 | `distance` | `number?` | Maximum audible distance in nodes (default: 16.0) |
 | `gain` | `number?` | Volume multiplier (default: 1.0) |
-| `max_hear_distance` | `number?` | Alias for distance in nodes |
 | `max_interval` | `number?` | Maximum cooldown between automatic triggers (default: 22.0) |
 | `min_interval` | `number?` | Minimum cooldown between automatic triggers (default: 8.0) |
 | `name` | `string\|string[]` | Technical sound name or list of sound variations |
@@ -551,7 +974,7 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `add_follower` | `function SquadSubsystem.add_follower(self: table, follower_obj: ObjectRef, force?: boolean)   -> added: boolean` | Registers a follower under a leader @*param* `self` — Leader mob instance @*param* `follower_obj` — Follower entity object @*param* `force` — If true, bypasses max_followers capacity limit (default: false) @*return* `added` — True if follower was newly registered, false if already present, full, or invalid |
+| `add_follower` | `function SquadSubsystem.add_follower(self: table, follower_obj: ObjectRef, force?: boolean)   -> added: boolean` | Registers a follower under a leader @*param* `self` — Leader mob instance @*param* `follower_obj` — Follower entity object @*param* `force` — If true, bypasses max_followers capacity limit (default: false) @*return* `added` — True if follower was newly registered or reconfirmed, false if full or invalid |
 | `adopt_nearby_orphans` | `function SquadSubsystem.adopt_nearby_orphans(self: table, search_radius?: number)` | Leader searches nearby area to adopt orphans or re-link separated followers @*param* `self` — Leader mob instance @*param* `search_radius` — Radius to search (default: 32.0) |
 | `clean_followers` | `function SquadSubsystem.clean_followers(self: table)   -> count: integer   2. alive_followers: table` | Cleans invalid/dead follower objects from a leader's roster in-place without table allocations @*param* `self` — Leader mob instance |
 | `elect_successor` | `function SquadSubsystem.elect_successor(self: table, search_radius?: number)   -> success: boolean` | Democratic leader election: promotes the first surviving follower in-place @*param* `self` — Mob instance (dying leader or surviving follower) @*param* `search_radius` — Radius to search for surviving members (default: 24.0) @*return* `success` — True if a new leader was established |
@@ -563,34 +986,99 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `spawn_cluster` | `function SquadSubsystem.spawn_cluster(self: table, def: table)` | Spawns missing follower peers/members radially around the cluster leader Single unified engine method supporting aquatic shoals, airborne swarms, and ground squads @*param* `self` — Leader mob instance @*param* `def` — Mob definition table |
 | `spawn_initial_followers` | `function SquadSubsystem.spawn_initial_followers(self: table, follower_type?: string\|table, max_count?: integer, spawn_radius?: number)` | Adopts nearby orphans and spawns missing followers radially around the leader @*param* `self` — Leader mob instance @*param* `follower_type` — Entity technical name (default: self.pack_follower_type) @*param* `max_count` — Target follower count (default: self.pack_max_followers or 3) @*param* `spawn_radius` — Radial spawn distance (default: 1.5) |
 
+### `StatusEffectDef`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Unique effect identifier |
+| `duration` | `number` | Duration in seconds |
+| `type` | `("custom"\|"debuff"\|"dot"\|"root"\|"slow")?` | Effect archetype (`"root"` halts movement/jump; `"debuff"` for weakness, damage amp, healing suppression, or stamina drain) |
+| `chance` | `number?` | Optional success chance (fraction `0.0`-`1.0` or percentage `1`-`100`; defaults to 100% when undefined) |
+| `speed_factor` | `number?` | Movement speed fractional multiplier (e.g. 0.5 for 50% slow) |
+| `jump_factor` | `number?` | Jump fractional multiplier (e.g. 0.0 to prevent jump) |
+| `gravity_factor` | `number?` | Gravity fractional multiplier |
+| `fov_factor` | `number?` | Camera FOV multiplier factor applied to player target (e.g. 0.85 for shock/concussion dip; compounded on top of baseline FOV) |
+| `fov_duration` | `number?` | Optional sub-duration in seconds for FOV override if shorter than effect duration (e.g. 0.8s flash dip within 3.5s effect) |
+| `fov_transition` | `number?` | FOV smoothing transition time in seconds (default: 0.2s) |
+| `damage` | `number?` | Damage per interval tick for DoT |
+| `interval` | `number?` | Interval between DoT ticks in seconds (default: 1.0) |
+| `damage_type` | `string?` | Damage group name for DoT (default: "fleshy") |
+| `caster` | `ObjectRef?` | Attacking entity or player source |
+| `penetrate_armor` | `boolean?` | Whether DoT bypasses armor damage reduction (default: true) |
+| `particle_spawner` | `table\|fun(target: ObjectRef):table?` | Particle spawner definition for DoT ticks |
+| `envelop` | `table<{ texture: string }>?` | Visual envelop configuration |
+| `envelop_texture` | `string?` | Visual envelop sleeve texture asset |
+| `hud_vignette` | `string\|table?` | Fullscreen responsive screen vignette configuration |
+| `cleanse_in_water` | `boolean?` | Whether immersion in water immediately cleanses the effect |
+| `drain_hunger` | `number?` | Hunger or stamina units drained per tick via hunger_adapter |
+| `anti_heal` | `boolean?` | Whether health regeneration is suppressed during effect |
+| `damage_multiplier` | `number?` | Incoming damage multiplier while afflicted (e.g. 1.35 for brittle) |
+| `on_apply` | `fun(target: ObjectRef)?` | Callback when effect is first applied |
+| `on_step` | `fun(dtime: number, target: ObjectRef)?` | Callback on step tick (forwarded to envelop) |
+| `on_tick` | `fun(target: ObjectRef)?` | Callback on periodic DoT tick |
+| `on_remove` | `fun(target: ObjectRef)?` | Callback when effect is removed or expires |
+
+### `StatusEffectsSubsystem`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `apply_effect` | `function StatusEffectsSubsystem.apply_effect(target: ObjectRef, effect_def: StatusEffectDef)   -> ObjectRef\|boolean` | Applies or refreshes a status effect on target (player or entity) |
+| `remove_effect` | `function StatusEffectsSubsystem.remove_effect(target: ObjectRef, effect_id: string)   -> success: boolean` | Removes an active status effect from target |
+| `has_effect` | `function StatusEffectsSubsystem.has_effect(target: ObjectRef, effect_id: string)   -> has_effect: boolean` | Checks if target currently has an active status effect |
+| `get_effects` | `function StatusEffectsSubsystem.get_effects(target: ObjectRef)   -> effects: table\|nil` | Retrieves all active status effects for a target |
+| `clear_effects` | `function StatusEffectsSubsystem.clear_effects(target: ObjectRef)` | Clears all active status effects and restores baseline physics on target |
+| `get_damage_multiplier` | `function StatusEffectsSubsystem.get_damage_multiplier(target: ObjectRef)   -> multiplier: number` | Retrieves compound damage multiplier across all active status effects on target |
+| `is_rooted` | `function StatusEffectsSubsystem.is_rooted(target: ObjectRef)   -> is_rooted: boolean` | Checks if target is currently affected by a root status effect or has speed factor <= 0 |
+
 ### `StateMachineSubsystem`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `transition_to` | `function StateMachineSubsystem.transition_to(self: table, new_state: string)` | Transitions an entity to a new state, invoking exit and enter hooks @*param* `self` — Mob instance @*param* `new_state` — Target state name |
-| `update` | `function StateMachineSubsystem.update(self: table, dtime: number)   -> handled: boolean` | Updates the current custom state if one is active @*param* `self` — Mob instance @*param* `dtime` — Step delta time @*return* `handled` — True if handled by a custom state, false otherwise |
+| `transition_to` | `function StateMachineSubsystem.transition_to(self: MobStateContext, new_state: string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+6))` | Transitions an entity to a new state, invoking exit and enter hooks. ### How States Are Set & Transition Mechanisms: 1. **Canonical Transition API (`x_mob_core.transition_to` / `state_machine.transition_to`)**: The standard method to transition between states. It checks whether `old_state == new_state` (preventing redundant cycles), calls `custom_states[old_state].exit(self)` if available, updates `self.state = new_state`, and calls `custom_states[new_state].enter(self)`. 2. **Custom State Step Tick Return**: Inside `custom_states[state].step(self, dtime)`, return a target state name string (e.g., `return "idle"` or `return "fleeing"`) to trigger an automatic call to `state_machine.transition_to(self, next_state)`. Returning `nil` or `true` retains current state. 3. **Declarative State Transitions (`transitions = { ... }`)**: Evaluated every tick in the lifecycle step pipeline. When `condition(self)` evaluates to `true`, `self.state` transitions from `from` (or wildcard `"*"`) to `to`, and `on_transition(self)` runs. 4. **Core AI / Subsystem Direct Assignment (`self.state = "..."`)**: Core internal routines (`mob_ai.step_wander_or_idle`, `combat_handler`, `shoal`, `coordination`) set `self.state` directly during built-in behaviors. Note: direct assignment does not trigger `custom_states` `exit` or `enter` hooks; use `transition_to` when custom state hooks are needed. 5. **Action Timer Completion**: When `self.action_timer` completes, `self:on_action_end()` is invoked and `self.state` resets to `"idle"`. ### What Is Available on `self` for Developers: Inside state callbacks (`enter`, `step`, `exit`), developers have full access to `self` (`MobStateContext`): - **Engine Object**: `self.object` (`ObjectRef`), `self.name`, `self._moveresult`. - **Timers & Cooldowns**: `self.action_timer`, `self.attack_cooldown`, `self.panic_timer`, `self.cooldowns`, - and helper `self:set_cooldown(key, duration)`. - **Tactical Memory**: `self.memory` (`MobMemoryState`: target LKP, danger repulsion, flee state). - **Locomotion Attributes**: `self.walk_speed`, `self.pursuit_speed`, `self.wander_speed`, `self.flee_speed`, - `self.wander_radius`, and `self.path_state`. - **Combat & Defense**: `self.damage`, `self.attack_range`, `self.aggro_radius`, `self.knockback_mult`, - and `self.factions`. - **Animation & Audio**: `x_mob_core.animator.play(self.object, anim_name, opts)` and - `x_mob_core.sound.play(self, sound_type)`. @*param* `self` — Mob instance context table @*param* `new_state` — Target state name to transition to ```lua -- Canonical state machine states coordinating mob behavior, animation, and locomotion. new_state: \| "idle" -- Entity is stationary, resting, or scanning for nearby targets \| "wandering" -- Entity is passively exploring local terrain within wander_radius \| "walk" -- Entity is traversing toward an objective, waypoint, or squad position \| "combat" -- Entity has acquired a hostile target and is actively maneuvering/pursuing \| "attacking" -- Entity is executing an active melee attack animation or combat ability \| "shooting" -- Entity is executing a ranged attack windup, casting, or projectile launch \| "fleeing" -- Entity is executing a tactical retreat due to low HP or threat level \| "regrouping" -- Entity is returning to its squad leader or shoal anchor position \| "flinching" -- Entity is in hit-stun recoil from taking damage (hyper-armor checked) \| "dying" -- Entity has reached zero HP and is playing its defeat animation before removal ``` |
+| `update` | `function StateMachineSubsystem.update(self: MobStateContext, dtime: number)   -> handled: boolean` | Updates the current custom state if one is active. Invoked every server tick during the mob's step pipeline. If `self.state` matches a registered entry in `self.custom_states`, executes its `step(self, dtime)` callback. If that callback returns a different state name, triggers `state_machine.transition_to(self, next_state)`. @*param* `self` — Mob instance context table @*param* `dtime` — Step delta time in seconds @*return* `handled` — True if handled by an active custom state, false otherwise |
+
+### `StateTransitionDef`
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `condition` | `fun(self: MobStateContext):boolean` | Condition predicate returning true to transition |
+| `from` | `string\|"*"\|"attacking"\|"combat"\|"dying"...(+7)` | Source state name or "*" for wildcard |
+| `on_transition` | `fun(self: MobStateContext)?` | Optional callback executed during transition |
+| `to` | `string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+6)` | Destination state name |
 
 ### `StepHook`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `handler` | `fun(self: table, dtime: number, def: table, moveresult?: table):boolean\|nil` |  |
-| `name` | `string` | Identifier of the hook |
-| `priority` | `integer` | Execution order (lower runs first) |
+| `handler` | `fun(self: table, dtime: number, def: table, moveresult?: table):boolean\|nil` | Middleware callback executed each step |
+| `name` | `string` | Unique identifier of the hook (e.g. "mymod:freeze_aura") |
+| `priority` | `integer` | Execution order (lower runs first; see priority schedule in documentation) |
 
 ### `StepPipeline`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `execute` | `function StepPipeline.execute(self: table, dtime: number, def: table, moveresult?: table)   -> handled: boolean` | Executes registered step hooks sequentially in priority order. @*param* `self` — Mob entity instance @*param* `dtime` — Step delta time @*param* `def` — Entity definition table @*param* `moveresult` — Engine move result @*return* `handled` — True if intercepted by any hook |
-| `register_step_hook` | `function StepPipeline.register_step_hook(name: string, priority: integer, handler: fun(self: table, dtime: number, def: table, moveresult?: table):boolean\|nil)` | Registers a step middleware hook executed during handle_core_step. If the handler returns `true`, subsequent step handling is intercepted (early return). @*param* `name` — Unique hook identifier @*param* `priority` — Execution order (e.g. 10 for pre-combat, 50 for combat, 100 for post) |
-| `unregister_step_hook` | `function StepPipeline.unregister_step_hook(name: string)` | Unregisters a previously registered step hook. |
+| `execute` | `function StepPipeline.execute(self: table, dtime: number, def: table\|MobRegistrationDef, moveresult?: table)   -> handled: boolean` | Executes registered step hooks sequentially in priority order. If any hook handler returns `true`, pipeline execution halts immediately and returns `true`. @*param* `self` — Mob entity instance @*param* `dtime` — Step delta time in seconds @*param* `def` — Entity definition table @*param* `moveresult` — Engine move result @*return* `handled` — True if intercepted by any hook, false otherwise |
+| `register_step_hook` | `function StepPipeline.register_step_hook(name: string, priority: integer, handler: fun(self: table, dtime: number, def: table, moveresult?: table):boolean\|nil)` | Registers a step middleware hook executed during entity step lifecycle. Hooks execute sequentially in ascending priority order on every server tick. If the handler returns `true`, subsequent step handling is intercepted (early return). @*param* `name` — Unique hook identifier (namespaced, e.g. "mymod:freeze_aura") @*param* `priority` — Execution order (lower runs first; e.g. < 18 for CC/stun, 18 melee, 20 shooter, 50+ aura) @*param* `handler` — Callback function. Return `true` to intercept, or `false`/`nil` to continue. |
+| `unregister_step_hook` | `function StepPipeline.unregister_step_hook(name: string)` | Unregisters a previously registered step hook by identifier name. @*param* `name` — Unique hook identifier to remove |
 
-### `SwarmAlertDef`
+### `SurfaceSubsystem`
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `enabled` | `boolean?` | Whether pack threat alerting is enabled |
+| `dir_to_surface_rotation` | `function SurfaceSubsystem.dir_to_surface_rotation(dir: Vector, up: Vector)   -> Euler: Vector` | Computes 3D Euler angles (pitch, yaw, roll in radians) matching Luanti extrinsic Z-X-Y order @*param* `dir` — Movement direction @*param* `up` — Surface normal @*return* `Euler` — rotation in radians {x = pitch, y = yaw, z = roll} |
+| `find_adjacent_surface` | `function SurfaceSubsystem.find_adjacent_surface(pos: Vector, preferred_normal?: Vector)   -> surface_info: table\|nil` | Checks whether an entity is physically adjacent to a solid walkable surface (floor, wall, ceiling, or uneven corner) within reach (~1.15m). Retains preferred_normal if the existing surface is still in contact (hysteresis). Returns surface info table or nil if entity is floating in mid-air. @*param* `pos` — World position @*param* `preferred_normal` — Previous surface normal for geometric hysteresis @*return* `surface_info` — {has_surface = boolean, normal = Vector, surface_type = string} |
+| `interpolate_rotation` | `function SurfaceSubsystem.interpolate_rotation(cur_rot: Vector, target_rot: Vector, factor: number, max_delta?: number)   -> Vector` | Smoothly interpolates Euler angles handling modulo wrap with optional angular rate limiting @*param* `cur_rot` — Current rotation @*param* `target_rot` — Target rotation @*param* `factor` — Interpolation factor [0, 1] @*param* `max_delta` — Maximum angular delta allowed per step (radians) |
+| `interpolate_vector` | `function SurfaceSubsystem.interpolate_vector(v1: Vector, v2: Vector, factor: number)   -> Vector` | Linearly interpolates and normalizes two 3D vectors @*param* `v1` — Start vector @*param* `v2` — Target vector @*param* `factor` — Interpolation factor [0, 1] |
+
+### `SwarmAlertDef`
+
+Declarative pack/faction rally configuration evaluated automatically by combat_handler on damage and death.
+Unlike imperative broadcast_threat, swarm_alert also writes coordinate memory for obscured allies.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `enabled` | `boolean?` | Whether pack threat alerting is enabled (default: true) |
 | `max_allies` | `integer?` | Maximum pack members rallied per threat alert (default: 8) |
 | `radius` | `number?` | Search radius for alerting nearby pack allies (default: 24.0) |
 
@@ -648,10 +1136,10 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 | `generate_uuid` | `function UtilsSubsystem.generate_uuid()   -> uuid: string` | Generates an RFC 4122 Version 4 compliant UUID. Uses Luanti's OS-backed SecureRandom for guaranteed uniqueness, with an automatic RFC 4122 template math.random fallback. |
 | `get_ground_y` | `function UtilsSubsystem.get_ground_y(pos: Vector, max_down?: number, max_up?: number, walkable_only?: boolean)   -> ground_y: number\|nil` | Finds the topmost solid ground surface near a given coordinate @*param* `pos` — Position to check @*param* `max_down` — Maximum distance to search downwards (default: 8) @*param* `max_up` — Maximum distance to search upwards (default: 3) @*param* `walkable_only` — If true, requires walkable non-liquid node with headroom (default: true) @*return* `ground_y` — Top surface height of highest ground node, or nil |
 | `get_headroom` | `function UtilsSubsystem.get_headroom(origin: Vector, max_check?: number)   -> headroom: number` | Scans vertically upwards from origin to check distance to the first solid ceiling node. @*param* `origin` — Base position (e.g. foot or center coordinate) @*param* `max_check` — Maximum nodes to scan upward (default: 4.0) @*return* `headroom` — Distance to first walkable ceiling node, or max_check if open sky |
-| `get_water_column_bounds` | `function UtilsSubsystem.get_water_column_bounds(pos: Vector, _pad?: number\|table)   -> safe_min_y: number, safe_max_y: number, is_shallow: boolean, surface_y: number, floor_y: number` | Determines safe submerged vertical range for an entity in the water column. Strictly guarantees minimum 2-node clearance below the air surface. @*param* `pos` — World position @*param* `_pad` — Optional padding @*return* `safe_min_y` — Lowest safe Y coordinate @*return* `safe_max_y` — Highest safe Y coordinate @*return* `is_shallow` — True if water depth is under 3.5 nodes @*return* `surface_y` — Highest water block Y @*return* `floor_y` — Lowest water block Y |
+| `get_water_column_bounds` | `function UtilsSubsystem.get_water_column_bounds(pos: Vector, _pad?: number\|table)   -> safe_min_y: number   2. safe_max_y: number   3. is_shallow: boolean   4. surface_y: number   5. floor_y: number` | Determines safe submerged vertical range for an entity in the water column. Strictly guarantees minimum 2-node clearance below the air surface. @*param* `pos` — World position @*param* `_pad` — Optional padding @*return* `safe_min_y` — Lowest safe Y coordinate (above seabed) @*return* `safe_max_y` — Highest safe Y coordinate (at least 2 nodes below surface air) @*return* `is_shallow` — True if water depth is under 3.5 nodes @*return* `surface_y` — Highest water block Y @*return* `floor_y` — Lowest water block Y |
 | `is_player_alive` | `function UtilsSubsystem.is_player_alive(player: ObjectRef)   -> is_alive: boolean` | Checks if an ObjectRef is a valid living player or entity @*param* `player` — Target entity @*return* `is_alive` — True if player reference is valid and alive |
-| `is_walkable_node` | `function UtilsSubsystem.is_walkable_node(pos_or_x: Vector\|number, y?: number, z?: number)   -> is_walkable: boolean` | Checks if a node at world coordinates or Vector represents walkable solid terrain @*param* `pos_or_x` — Vector or X world coordinate @*param* `y` — Optional Y world coordinate @*param* `z` — Optional Z world coordinate @*return* `is_walkable` — True if node is registered and walkable |
-| `is_water_node` | `function UtilsSubsystem.is_water_node(pos_or_x: Vector\|number, y?: number, z?: number)   -> is_water: boolean` | Checks if a node at world coordinates or Vector represents water @*param* `pos_or_x` — Vector or X world coordinate @*param* `y` — Optional Y world coordinate @*param* `z` — Optional Z world coordinate @*return* `is_water` — True if node is in group:water |
+| `is_walkable_node` | `function UtilsSubsystem.is_walkable_node(pos_or_x: number\|Vector, y?: number, z?: number)   -> is_walkable: boolean` | Checks if a world position or coordinate represents a walkable solid node. @*param* `pos_or_x` — World position table or X coordinate @*param* `y` — Y coordinate @*param* `z` — Z coordinate |
+| `is_water_node` | `function UtilsSubsystem.is_water_node(pos_or_x: number\|Vector, y?: number, z?: number)   -> is_water: boolean` | Checks if a world position or coordinate represents a water node. @*param* `pos_or_x` — World position table or X coordinate @*param* `y` — Y coordinate @*param* `z` — Z coordinate |
 | `line_of_sight` | `function UtilsSubsystem.line_of_sight(p1: Vector, p2: Vector)   -> is_clear: boolean` | Line of sight check between two points using native engine C++ ray traversal with liquid penetration support |
 | `pick_ground_waypoint` | `function UtilsSubsystem.pick_ground_waypoint(current_pos: Vector, origin?: Vector, radius?: number, min_dist?: number, max_dist?: number, hover_offset?: number)   -> waypoint: Vector\|nil` | Picks a ground-anchored wander waypoint near current position over solid walkable nodes @*param* `current_pos` — Current mob world position @*param* `origin` — Center origin of wander boundary (default: current_pos) @*param* `radius` — Maximum wander radius from origin (default: 10.0) @*param* `min_dist` — Minimum step distance from current position (default: 3.0) @*param* `max_dist` — Maximum step distance from current position (default: 7.5) @*param* `hover_offset` — Vertical offset above detected ground (default: 1.4) @*return* `waypoint` — Ground-anchored target position or nil |
 | `shallow_copy` | `function UtilsSubsystem.shallow_copy(tbl: <T:table>)   -> <T:table>` | Shallow copies a table |
@@ -660,11 +1148,14 @@ High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luant
 
 ## Type Aliases & Callbacks
 
-| Type Alias | Signature / Definition |
-| :--- | :--- |
-| `CoreEventName` | `"on_mob_death"\|"on_mob_despawn"\|"on_mob_hurt"\|"on_mob_spawn"` |
-| `EventListenerCallback` | `fun(...any)` |
-| `PathfindingCallback` | `fun(path: Vector[]\|nil)` |
+| Type Alias | Signature / Definition | Description |
+| :--- | :--- | :--- |
+| `CoreEventName` | `"on_mob_death"\|"on_mob_despawn"\|"on_mob_hurt"\|"on_mob_spawn"` | Standard pub-sub event names emitted across mob lifecycles on the x_mob_core event bus. |
+| `CustomStepHandler` | `fun(self: table, dtime: number, moveresult?: table, def?: table):boolean\|nil` | Pre-combat custom ability interception hook handler. Executed at Priority 15 in the middleware pipeline prior to declarative melee and shooter logic. Return `true` to halt the pipeline (e.g. while casting spells, summoning minions, in tactical standoff). Return `false` or `nil` to fall through into standard declarative melee and ranged attacks. |
+| `EventListenerCallback` | `fun(...any)` | Callback function invoked when a pub-sub event is emitted on the event bus. |
+| `MobStateType` | `string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+6)` | Canonical state machine states coordinating mob behavior, animation, and locomotion. |
+| `PathfindingCallback` | `fun(path: Vector[]\|nil)` | Callback function invoked when an asynchronous A* path search completes. Receives an array of solved 3D waypoint vectors on success, or `nil` if unreachable. |
+| `StepHookHandler` | `fun(self: table, dtime: number, def: table, moveresult?: table):boolean\|nil` | Step hook callback invoked on every server step for living mob entities. Return values: - Return `true` to **intercept** step handling: cancels subsequent pipeline hooks from firing on this tick, and bypasses default pursuit and wandering locomotion. - Return `false` or `nil` to allow subsequent pipeline hooks and normal mob locomotion to proceed. |
 
 ---
 
@@ -713,6 +1204,35 @@ function x_mob_core.register_mob(name: string, def: MobRegistrationDef)
 #### `x_mob_core.register_step_hook`
 
 Registers an extensible step middleware hook into the mob execution pipeline.
+Allows 3rd-party mods and core subsystems to inject custom step logic without
+modifying core engine loops or overriding mob `on_step` callbacks (Open/Closed Principle).
+
+### Lifecycle & Execution Order
+Step hooks execute sequentially on every server tick for all living `x_mob_core` entities
+during `on_step`, after core lifecycle routines (death countdown, buoyancy, timers, target validation)
+and custom state machines have run, but before fallback idle wandering or target pursuit.
+
+Hooks are evaluated in ascending order of `priority` (lower numerical values run first).
+
+### Early Return & Interception
+The return value of `handler` controls execution flow:
+- Return `true`: **Intercepts** the step. Halts subsequent pipeline hooks from firing on this tick,
+  and bypasses default idle wandering (`step_wander_or_idle`) and target pursuit (`step_move_or_idle`).
+  Ideal for crowd control effects (stun, freeze, sleep, fear, paralysis).
+- Return `false` or `nil`: Continues to the next hook in the pipeline and allows normal locomotion.
+
+### Priority Schedule & Reference Table
+| Priority | Subsystem / Recommended Usage | Description |
+|:---|:---|:---|
+| `< 15` | Crowd Control / Status Effects | Stuns, freezes, sleep. Returning `true` halts attacks & movement. |
+| `15` | Built-in `"custom_step"` | Pre-combat custom ability hook (spells, summons, tactical standoff). |
+| `18` | Built-in `"melee"` | Internal melee attack range validation and strikes. |
+| `20` | Built-in `"shooter"` | Internal projectile attack aiming and shooting. |
+| `25` | Built-in `"environment"` | Internal hazard checks (lava, fire, drowning, suffocation). |
+| `30` | Built-in `"pack_cluster"` | Internal pack and squad cluster spawning trigger. |
+| `40` | Built-in `"swarm_nav"` | Internal 3D aerial Boids swarm navigation and dive-bombing. |
+| `42` | Built-in `"shoal_nav"` | Internal aquatic schooling navigation and anchor steering. |
+| `50+` | Post-Combat / Passives | Periodic damage ticks, status aura updates, dynamic buffs, telemetry. |
 
 ```lua
 function x_mob_core.register_step_hook(name: string, priority: integer, handler: fun(self: table, dtime: number, def: table, moveresult?: table):boolean|nil)
@@ -720,9 +1240,9 @@ function x_mob_core.register_step_hook(name: string, priority: integer, handler:
 
 **Parameters:**
 
-* `name` (`string`): Unique hook identifier
-* `priority` (`integer`): Execution order (lower runs first)
-* `handler` (`fun(self: table, dtime: number, def: table, moveresult?: table):boolean|nil`)
+* `name` (`string`): Unique hook identifier (namespaced, e.g. "mymod:freeze_aura")
+* `priority` (`integer`): Execution order (lower runs first; see priority schedule)
+* `handler` (`fun(self: table, dtime: number, def: table, moveresult?: table):boolean|nil`): Callback function. Return `true` to intercept, or `false`/`nil` to continue.
 
 #### `x_mob_core.schedule`
 
@@ -796,17 +1316,17 @@ function x_mob_core.set_texture(self: table|ObjectRef, id: integer, variations?:
 Transitions an entity to a new state machine state, invoking exit and enter hooks.
 
 ```lua
-function x_mob_core.transition_to(self: table, new_state: string)
+function x_mob_core.transition_to(self: MobStateContext, new_state: string|"attacking"|"combat"|"dying"|"fleeing"...(+6))
 ```
 
 **Parameters:**
 
-* `self` (`table`): Mob instance
-* `new_state` (`string`): Target state name
+* `self` (`MobStateContext`): Mob instance context table
+* `new_state` (`string|"attacking"|"combat"|"dying"|"fleeing"...(+6)`): Target state name
 
 #### `x_mob_core.unregister_step_hook`
 
-Unregisters a previously registered step middleware hook.
+Unregisters a previously registered step middleware hook by unique identifier name.
 
 ```lua
 function x_mob_core.unregister_step_hook(name: string)
@@ -814,7 +1334,7 @@ function x_mob_core.unregister_step_hook(name: string)
 
 **Parameters:**
 
-* `name` (`string`)
+* `name` (`string`): Unique hook identifier to remove (e.g. "mymod:freeze_aura")
 
 ---
 
@@ -864,6 +1384,24 @@ function x_mob_core.find_path_sync(start_pos: Vector, target_pos: Vector, abilit
 
 Autonomous steering behaviors, surface climbing, liquid swimming, idle and wander routines, raycast player perception, tactical retreat, and velocity damping.
 
+#### `x_mob_core.find_nearest_shore_pos`
+
+Finds the nearest dry walkable shoreline node adjacent to water within max_radius.
+
+```lua
+function x_mob_core.find_nearest_shore_pos(pos: Vector, max_radius?: number)
+  -> shore_pos: Vector|nil
+```
+
+**Parameters:**
+
+* `pos` (`Vector`): Starting position (usually in water)
+* `max_radius` (`number?`): Maximum search radius in blocks (default: 16)
+
+**Returns:**
+
+* `shore_pos` (`Vector|nil`): Nearest dry shore coordinate, or nil if none found
+
 #### `x_mob_core.halt_horizontal_velocity`
 
 Halts horizontal velocity of a mob entity while preserving vertical motion/gravity and liquid buoyancy.
@@ -875,6 +1413,23 @@ function x_mob_core.halt_horizontal_velocity(self: table)
 **Parameters:**
 
 * `self` (`table`): Entity instance
+
+#### `x_mob_core.is_aquatic_mob`
+
+Checks if an entity is an aquatic mob (fish, shoal, etc.) that swims freely in liquid.
+
+```lua
+function x_mob_core.is_aquatic_mob(self: table)
+  -> is_aquatic: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Entity instance
+
+**Returns:**
+
+* `is_aquatic` (`boolean`)
 
 #### `x_mob_core.retreat_from`
 
@@ -913,6 +1468,20 @@ function x_mob_core.scan_for_player(self: table, scan_radius?: number, eye_heigh
 **Returns:**
 
 * `player` (`ObjectRef|nil`): Nearest visible living player or nil
+
+#### `x_mob_core.set_horizontal_velocity`
+
+Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity.
+
+```lua
+function x_mob_core.set_horizontal_velocity(self: table, speed: number, yaw: number)
+```
+
+**Parameters:**
+
+* `self` (`table`): Entity instance
+* `speed` (`number`): Horizontal movement speed
+* `yaw` (`number`): Orientation angle in radians
 
 #### `x_mob_core.step_move_or_idle`
 
@@ -1049,6 +1618,11 @@ function x_mob_core.alert_nearby_allies(pos: Vector, radius?: number, target: Ob
 #### `x_mob_core.broadcast_threat`
 
 Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy.
+Directly assigns `ent.target = target` and switches unengaged allies to `"combat"`.
+Note: This is an imperative one-shot function requiring a valid living `ObjectRef`.
+For automated damage and death rallying with spatial memory investigation (navigating
+to disturbance coordinates even without line of sight), use declarative `swarm_alert`
+in the mob definition instead.
 
 ```lua
 function x_mob_core.broadcast_threat(self: table, target: ObjectRef, radius?: number, max_allies?: integer)
@@ -1293,6 +1867,43 @@ function x_mob_core.step_swarm_combat(self: table, dtime: number, def: table)
 
 Tool capability damage calculations, weapon wear, water knockback dampening, directional damage particles, damage indicator flashing, child and arrow detachment on death, faction allegiance and enemy checks, predictive intercept aiming, and declarative parabolic loot drops.
 
+#### `x_mob_core.apply_envelop`
+
+Attaches a 3D rectangular sleeve visual envelop to a target entity or player.
+
+```lua
+function x_mob_core.apply_envelop(target: ObjectRef, def: table)
+  -> envelop_obj: ObjectRef
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+* `def` (`table`): Envelop configuration table (`id`, `duration`, `texture`, `on_step`, `on_remove`)
+
+**Returns:**
+
+* `envelop_obj` (`ObjectRef`): Attached envelop entity ObjectRef
+
+#### `x_mob_core.apply_status_effect`
+
+Applies or refreshes a status effect on a target entity or player.
+Handles compound physics overrides, camera FOV factor overrides, DoT ticks, armor penetration, visual envelop sleeve binding, and HUD screen vignettes.
+
+```lua
+function x_mob_core.apply_status_effect(target: ObjectRef, effect_def: StatusEffectDef)
+  -> result: ObjectRef|boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+* `effect_def` (`StatusEffectDef`): Status effect definition table
+
+**Returns:**
+
+* `result` (`ObjectRef|boolean`): Attached envelop object if visual sleeve bound, or true on success
+
 #### `x_mob_core.are_allies`
 
 Checks whether two entities or players are allies according to faction and pack rules.
@@ -1357,6 +1968,18 @@ Clears any active damage flash on an entity, restoring its clean base texture mo
 
 ```lua
 function x_mob_core.clear_damage(obj: ObjectRef)
+```
+
+**Parameters:**
+
+* `obj` (`ObjectRef`): Entity object
+
+#### `x_mob_core.clear_regen`
+
+Clears any active health regeneration flash on an entity, restoring its clean base texture modifier.
+
+```lua
+function x_mob_core.clear_regen(obj: ObjectRef)
 ```
 
 **Parameters:**
@@ -1483,6 +2106,19 @@ function x_mob_core.handle_punch(self: table, puncher?: ObjectRef, time_from_las
 
 * `handled` (`boolean`)
 
+#### `x_mob_core.hide_health_bar`
+
+Hides or removes the dynamic overhead health bar on a mob entity.
+
+```lua
+function x_mob_core.hide_health_bar(self: table, remove_completely?: boolean)
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `remove_completely` (`boolean?`): If true, destroys child entity; otherwise sets is_visible = false
+
 #### `x_mob_core.indicate_damage`
 
 Flashes the entity red briefly upon taking damage for visual feedback.
@@ -1495,24 +2131,73 @@ function x_mob_core.indicate_damage(obj: ObjectRef)
 
 * `obj` (`ObjectRef`): Entity object to flash
 
-#### `x_mob_core.is_valid_projectile_target`
+#### `x_mob_core.indicate_regen`
 
-Validates whether an object is a targetable enemy for a projectile or shooter mob. Automatically filters out invalid references, the projectile itself, the firing shooter, engine built-ins (`__builtin:item`, `__builtin:falling_node`), utility entities (`x_mob_core:health_bar`), sister projectiles, and faction allies.
+Flashes the entity with a visible texture overlay (white by default) upon health regeneration.
 
 ```lua
-function x_mob_core.is_valid_projectile_target(source_or_proj: any, obj: any, options?: ProjectileTargetOptions)
+function x_mob_core.indicate_regen(obj: ObjectRef, color?: string, duration?: number)
+```
+
+**Parameters:**
+
+* `obj` (`ObjectRef`): Entity object to flash
+* `color` (`string?`): Optional custom colorize string (default: "^[colorize:#FFFFFF60")
+* `duration` (`number?`): Optional duration in seconds (default: 0.25)
+
+#### `x_mob_core.is_projectile`
+
+Agnostically checks whether a LuaEntity is classified as a projectile or arrow.
+
+```lua
+function x_mob_core.is_projectile(ent: table)
+  -> is_projectile: boolean
+```
+
+**Parameters:**
+
+* `ent` (`table`): LuaEntity table
+
+**Returns:**
+
+* `is_projectile` (`boolean`)
+
+#### `x_mob_core.is_valid_projectile_target`
+
+Validates whether an object is a targetable enemy for a projectile or shooter mob.
+Filters out dropped items (__builtin:item), falling nodes, utility entities, shooter self-hits, and allies.
+
+```lua
+function x_mob_core.is_valid_projectile_target(source_or_proj: table|ObjectRef, obj: ObjectRef, options?: ProjectileTargetOptions)
   -> is_valid: boolean
 ```
 
 **Parameters:**
 
-* `source_or_proj` (`any`): Firing mob or projectile instance
-* `obj` (`any`): Candidate target ObjectRef
-* `options` (`ProjectileTargetOptions?`): Target filtering options
+* `source_or_proj` (`table|ObjectRef`): Projectile entity instance, shooter mob, or ObjectRef
+* `obj` (`ObjectRef`): Target object to test
+* `options` (`ProjectileTargetOptions?`): Optional configuration table
 
 **Returns:**
 
-* `is_valid` (`boolean`): True if targetable enemy
+* `is_valid` (`boolean`): True if target is attackable, false if ignored
+
+#### `x_mob_core.perform_melee_attack`
+
+Executes an instantaneous melee strike against a target entity.
+Applies fleshy punch damage and triggers the configured on_strike callback or custom perform_attack override.
+
+```lua
+function x_mob_core.perform_melee_attack(self: table, target: ObjectRef, dir: Vector, def?: table, m_cfg?: MeleeConfigDef)
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `target` (`ObjectRef`): Target entity to punch
+* `dir` (`Vector`): Strike impulse direction vector
+* `def` (`table?`): Mob definition table
+* `m_cfg` (`MeleeConfigDef?`): Melee configuration table override
 
 #### `x_mob_core.predict_aim`
 
@@ -1536,6 +2221,25 @@ function x_mob_core.predict_aim(origin: Vector, tgt_pos: Vector, tgt_vel?: Vecto
 * `predicted_pos` (`Vector`): Predicted intercept position
 * `dir` (`Vector`): Normalized direction vector towards predicted position
 
+#### `x_mob_core.show_health_bar`
+
+Displays or updates the dynamic overhead health bar on a mob entity.
+
+```lua
+function x_mob_core.show_health_bar(self: table, cur_hp?: number, max_hp?: number)
+  -> shown: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `cur_hp` (`number?`): Current health (defaults to self.hp)
+* `max_hp` (`number?`): Maximum health (defaults to self.hp_max)
+
+**Returns:**
+
+* `shown` (`boolean`): True if health bar is shown or updated
+
 #### `x_mob_core.spawn_damage_particles`
 
 Spawns directional combat damage particles according to mob settings or global preferences.
@@ -1552,9 +2256,31 @@ function x_mob_core.spawn_damage_particles(obj: ObjectRef, puncher?: ObjectRef, 
 * `damage` (`number?`): Damage dealt
 * `def` (`table?`): Entity definition table
 
+#### `x_mob_core.step_melee`
+
+Advances declarative melee combat for an entity during its step tick.
+Validates attack range, raycast line-of-sight, halts horizontal velocity, turns mob to face target,
+plays attack animation and sound, and schedules delayed punch execution with reach tolerance.
+
+```lua
+function x_mob_core.step_melee(self: table, dtime: number, def: table)
+  -> handled: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `dtime` (`number`): Step delta time
+* `def` (`table`): Entity definition table containing melee configuration
+
+**Returns:**
+
+* `handled` (`boolean`): True if melee logic handled combat, halting movement
+
 #### `x_mob_core.step_projectile`
 
-Steps a projectile entity in flight, handling visual rotation, lifetime expiration, continuous collision raycasting, proximity fallback hit detection, node collision, damage application, and step/impact callbacks.
+Processes a standard projectile flight step: ballistics rotation, lifetime expiry,
+continuous raycasting, proximity collision, and impact handling.
 
 ```lua
 function x_mob_core.step_projectile(self: table, dtime: number, options?: ProjectileStepOptions)
@@ -1565,15 +2291,36 @@ function x_mob_core.step_projectile(self: table, dtime: number, options?: Projec
 
 **Parameters:**
 
-* `self` (`table`): Projectile LuaEntity table
-* `dtime` (`number`): Delta time in seconds
-* `options` (`ProjectileStepOptions?`): Flight and collision options
+* `self` (`table`): Projectile LuaEntity instance
+* `dtime` (`number`): Step delta time
+* `options` (`ProjectileStepOptions?`): Projectile configuration options
 
 **Returns:**
 
-* `hit` (`boolean`): True if projectile collided with target or solid node, or expired
-* `hit_obj` (`ObjectRef|nil`): Target object collided with
-* `hit_pos` (`Vector|nil`): Impact location in world coordinates
+* `hit` (`boolean`): True if the projectile impacted an object or solid node
+* `hit_obj` (`ObjectRef|nil`): Direct object impacted, if any
+* `hit_pos` (`Vector|nil`): World coordinate of the impact
+
+#### `x_mob_core.step_shooter`
+
+Advances declarative ranged combat (shooter) for an entity during its step tick.
+Validates range distance, raycast line-of-sight, performs tactical kiting if target enters min_range,
+dispatches charge windup callbacks, calculates aim lead trajectory, and spawns projectile entities.
+
+```lua
+function x_mob_core.step_shooter(self: table, dtime: number, def: table)
+  -> handled: boolean
+```
+
+**Parameters:**
+
+* `self` (`table`): Mob entity instance
+* `dtime` (`number`): Step delta time
+* `def` (`table`): Entity definition table containing shooter configuration
+
+**Returns:**
+
+* `handled` (`boolean`): True if shooter logic handled combat, halting or kiting movement
 
 #### `x_mob_core.strip_damage_mod`
 
@@ -1592,31 +2339,22 @@ function x_mob_core.strip_damage_mod(mod?: string)
 
 * `clean_mod` (`string`): Texture modifier without damage colorize
 
-#### `x_mob_core.indicate_regen`
+#### `x_mob_core.strip_flash_mod`
 
-Flashes the entity with a visible texture overlay (white by default, matching hurt flash feedback) upon health regeneration. Yields precedence to active damage flashes.
+Strips all transient combat damage and health regeneration flash colorize modifiers.
 
 ```lua
-function x_mob_core.indicate_regen(obj: ObjectRef, color?: string, duration?: number)
+function x_mob_core.strip_flash_mod(mod?: string)
+  -> clean_mod: string
 ```
 
 **Parameters:**
 
-* `obj` (`ObjectRef`): Entity object to flash
-* `color` (`string?`): Optional texture modifier overlay (default: `"^[colorize:#FFFFFF60"`)
-* `duration` (`number?`): Duration in seconds (default: `0.25`)
+* `mod` (`string?`): Original texture modifier string
 
-#### `x_mob_core.clear_regen`
+**Returns:**
 
-Clears any active health regeneration flash on an entity, restoring its clean base texture modifier.
-
-```lua
-function x_mob_core.clear_regen(obj: ObjectRef)
-```
-
-**Parameters:**
-
-* `obj` (`ObjectRef`): Entity object
+* `clean_mod` (`string`): Texture modifier without damage or regen colorize
 
 #### `x_mob_core.strip_regen_mod`
 
@@ -1635,58 +2373,214 @@ function x_mob_core.strip_regen_mod(mod?: string)
 
 * `clean_mod` (`string`): Texture modifier without regen colorize
 
-#### `x_mob_core.strip_flash_mod`
+#### `x_mob_core.update_health_bar`
 
-Strips all transient combat damage and health regeneration flash colorize modifiers.
+Forces an update of the health bar based on current mob HP.
 
 ```lua
-function x_mob_core.strip_flash_mod(mod?: string)
-  -> clean_mod: string
+function x_mob_core.update_health_bar(self: table)
+  -> shown: boolean
 ```
 
 **Parameters:**
 
-* `mod` (`string?`): Original texture modifier string
+* `self` (`table`): Mob entity instance
 
 **Returns:**
 
-* `clean_mod` (`string`): Texture modifier without damage or regen colorize
+#### `x_mob_core.clear_status_effects`
 
----
-
-## Health Regeneration & Fleeing API
-
-Every mob in `x_mob_core` features built-in tactical fleeing and small health regeneration when running away (`0.5 HP/s` default) with visible white texture overlay feedback. Third-party mob developers can configure and override every aspect of health regeneration in their mob definition table (`def`):
-
-### Configuration Options
+Clears all active status effects and restores baseline physics on a target player or mob entity.
 
 ```lua
-x_mob_core.register_mob("mymod:custom_mob", {
-    initial_properties = { hp_max = 50 },
-
-    -- Structured health regeneration configuration (single source of truth)
-    health_regen = {
-        rate = 1.5,                  -- HP regenerated per second (default: 0.5)
-        enabled = true,              -- Set false to disable health regeneration
-        overlay = true,              -- White texture overlay flash on regen tick (default: true)
-        overlay_color = "#FFFFFF60", -- Custom colorize modifier (e.g. green or holy gold)
-        passive = false,             -- Set true to regenerate health continuously while idle
-        can_flee = true,             -- Set false to prevent mob from ever fleeing
-        flee_threshold = 12,         -- HP below which mob runs away (default: 25% max HP)
-        flee_ratio = 0.25,           -- Flee HP ratio (e.g. 0.25 for 25% max HP)
-        return_threshold = 30,       -- HP to exit fleeing and return to combat (default: 60% max HP)
-        return_ratio = 0.60,         -- Return HP ratio (e.g. 0.60 for 60% max HP)
-    },
-
-    -- Callbacks
-    on_regen_step = function(self, hp_added)
-        -- Custom sound or particle effects on each heal tick
-    end,
-    on_return_to_fight = function(self)
-        -- Triggered when mob recovers health above return threshold
-    end,
-})
+function x_mob_core.clear_status_effects(target: ObjectRef)
 ```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+#### `x_mob_core.get_damage_multiplier`
+
+Retrieves the compound damage multiplier across all active status effects on a target (e.g. 1.35 for brittle / crystallize).
+
+```lua
+function x_mob_core.get_damage_multiplier(target: ObjectRef)
+  -> multiplier: number
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+**Returns:**
+
+* `multiplier` (`number`): Compound damage multiplier (default: 1.0)
+
+#### `x_mob_core.get_status_effects`
+
+Retrieves all active status effect records for a target.
+
+```lua
+function x_mob_core.get_status_effects(target: ObjectRef)
+  -> effects: table<string, StatusEffectDef>|nil
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+**Returns:**
+
+* `effects` (`table<string, StatusEffectDef>|nil`): Active status effects map
+
+#### `x_mob_core.has_envelop`
+
+Checks whether a target currently has an attached visual 3D envelop sleeve.
+
+```lua
+function x_mob_core.has_envelop(target: ObjectRef)
+  -> has_envelop: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+**Returns:**
+
+* `has_envelop` (`boolean`): True if target has an attached envelop
+
+#### `x_mob_core.has_status_effect`
+
+Checks whether a target currently has a specific active status effect.
+
+```lua
+function x_mob_core.has_status_effect(target: ObjectRef, effect_id: string)
+  -> has_effect: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+* `effect_id` (`string`): Unique status effect identifier
+
+**Returns:**
+
+* `has_effect` (`boolean`): True if effect is currently active
+
+#### `x_mob_core.is_enveloped`
+
+Checks whether a target currently has an active visual envelop sleeve attached. Alias of `x_mob_core.has_envelop`.
+
+```lua
+function x_mob_core.is_enveloped(target: ObjectRef)
+  -> is_enveloped: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+**Returns:**
+
+* `is_enveloped` (`boolean`): True if target has an active envelop sleeve
+
+#### `x_mob_core.is_rooted`
+
+Checks whether a target entity or player currently has an active root status effect or has speed factor <= 0.
+
+```lua
+function x_mob_core.is_rooted(target: ObjectRef)
+  -> is_rooted: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+**Returns:**
+
+* `is_rooted` (`boolean`): True if target is rooted or has zero movement speed
+
+#### `x_mob_core.register_vignette`
+
+Registers a reusable custom screen vignette configuration for a specific status effect.
+
+```lua
+function x_mob_core.register_vignette(id: string, def: table)
+```
+
+**Parameters:**
+
+* `id` (`string`): Effect identifier
+* `def` (`table`): Vignette definition (`texture`, `colorize`, `opacity`, `z_index`)
+
+#### `x_mob_core.remove_envelop`
+
+Detaches and removes the active visual 3D envelop sleeve from a target.
+
+```lua
+function x_mob_core.remove_envelop(target: ObjectRef)
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+
+#### `x_mob_core.remove_status_effect`
+
+Removes an active status effect from a target, restoring physics modifiers, detaching envelops, and clearing HUD vignettes.
+
+```lua
+function x_mob_core.remove_status_effect(target: ObjectRef, effect_id: string)
+  -> success: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or mob entity
+* `effect_id` (`string`): Unique status effect identifier
+
+**Returns:**
+
+* `success` (`boolean`): True if the effect was removed
+
+#### `x_mob_core.set_default_vignette`
+
+Overrides the fallback default base texture for fullscreen HUD screen vignettes across all effects.
+
+```lua
+function x_mob_core.set_default_vignette(texture: string)
+```
+
+**Parameters:**
+
+* `texture` (`string`): Fallback texture asset name (default: "x_mob_core_vignette.png")
+
+#### `x_mob_core.set_vignette_prominence_multiplier`
+
+Sets the global vignette prominence / opacity scaling multiplier (e.g. `1.0` = default, `1.5` = extra prominent high-contrast mode for bright daylight).
+
+```lua
+function x_mob_core.set_vignette_prominence_multiplier(multiplier: number)
+```
+
+**Parameters:**
+
+* `multiplier` (`number`): Scaling factor clamped to `[0.1, 3.0]`.
+
+#### `x_mob_core.get_vignette_prominence_multiplier`
+
+Retrieves the current active global vignette prominence scaling multiplier.
+
+```lua
+function x_mob_core.get_vignette_prominence_multiplier(): number
+```
+
+**Returns:**
+
+* `multiplier` (`number`): Active prominence multiplier (default: `1.0`).
 
 ---
 
@@ -1987,59 +2881,6 @@ function x_mob_core.unlisten(event_name: string|"on_mob_death"|"on_mob_despawn"|
 
 ---
 
-## Miscellaneous Functions
-
-#### `x_mob_core.hide_health_bar`
-
-Hides or removes the dynamic overhead health bar on a mob entity.
-
-```lua
-function x_mob_core.hide_health_bar(self: table, remove_completely?: boolean)
-```
-
-**Parameters:**
-
-* `self` (`table`): Mob entity instance
-* `remove_completely` (`boolean?`): If true, destroys child entity; otherwise sets is_visible = false
-
-#### `x_mob_core.show_health_bar`
-
-Displays or updates the dynamic overhead health bar on a mob entity.
-
-```lua
-function x_mob_core.show_health_bar(self: table, cur_hp?: number, max_hp?: number)
-  -> shown: boolean
-```
-
-**Parameters:**
-
-* `self` (`table`): Mob entity instance
-* `cur_hp` (`number?`): Current health (defaults to self.hp)
-* `max_hp` (`number?`): Maximum health (defaults to self.hp_max)
-
-**Returns:**
-
-* `shown` (`boolean`): True if health bar is shown or updated
-
-#### `x_mob_core.update_health_bar`
-
-Forces an update of the health bar based on current mob HP.
-
-```lua
-function x_mob_core.update_health_bar(self: table)
-  -> shown: boolean
-```
-
-**Parameters:**
-
-* `self` (`table`): Mob entity instance
-
-**Returns:**
-
-* `shown` (`boolean`): True if health bar was updated
-
----
-
 ## Registries & State Tables
 
 | Registry / Table | Type | Description |
@@ -2050,8 +2891,8 @@ function x_mob_core.update_health_bar(self: table)
 | `x_mob_core.fast_pathfinder` | `table` | Time-sliced coroutine A* pathfinding engine |
 | `x_mob_core.lifecycle` | `table<string, table>` | Lifecycle & Entity Registration Entity registration wrapper and state machine |
 | `x_mob_core.min_heap` | `MinHeap` | Navigation & Pathfinding Binary min-heap priority queue |
-| `x_mob_core.motor` | `table<string, table>` | Modular motor subsystems (node_cache, doors, surface, safety, locomotion, ai) |
 | `x_mob_core.mob_memory` | `table` | Short-term mob memory buffer |
+| `x_mob_core.motor` | `table<string, table>` | Motor Subsystems & Navigation Coordinator Modular motor subsystems and navigation coordinator |
 | `x_mob_core.pack` | `table<string, table>` | Multi-Agent Pack Coordination & Swarm Intelligence Multi-agent squad, coordination, and swarm subsystems |
 | `x_mob_core.path_cache` | `table` | Pre-cached node content ID registry for zero-overhead pathfinding |
 | `x_mob_core.registered_mobs` | `table<string, MobRegistrationDef>` | Registry of all active mob definitions |

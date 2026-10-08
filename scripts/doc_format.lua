@@ -188,6 +188,9 @@ export.serializeAndExport = function(docs, outputDir)
 		["x_mob_core.step_wander_or_idle"] = 3,
 		["x_mob_core.step_move_or_idle"] = 3,
 		["x_mob_core.halt_horizontal_velocity"] = 3,
+		["x_mob_core.set_horizontal_velocity"] = 3,
+		["x_mob_core.is_aquatic_mob"] = 3,
+		["x_mob_core.find_nearest_shore_pos"] = 3,
 
 		-- Group 4: Animation Subsystem
 		["x_mob_core.play_animation"] = 4,
@@ -223,11 +226,24 @@ export.serializeAndExport = function(docs, outputDir)
 		["x_mob_core.indicate_damage"] = 6,
 		["x_mob_core.clear_damage"] = 6,
 		["x_mob_core.strip_damage_mod"] = 6,
+		["x_mob_core.indicate_regen"] = 6,
+		["x_mob_core.clear_regen"] = 6,
+		["x_mob_core.strip_regen_mod"] = 6,
+		["x_mob_core.strip_flash_mod"] = 6,
 		["x_mob_core.spawn_damage_particles"] = 6,
 		["x_mob_core.detach_attached_children"] = 6,
 		["x_mob_core.predict_aim"] = 6,
 		["x_mob_core.drop_item"] = 6,
 		["x_mob_core.drop_items"] = 6,
+		["x_mob_core.step_melee"] = 6,
+		["x_mob_core.perform_melee_attack"] = 6,
+		["x_mob_core.step_shooter"] = 6,
+		["x_mob_core.step_projectile"] = 6,
+		["x_mob_core.is_valid_projectile_target"] = 6,
+		["x_mob_core.is_projectile"] = 6,
+		["x_mob_core.show_health_bar"] = 6,
+		["x_mob_core.hide_health_bar"] = 6,
+		["x_mob_core.update_health_bar"] = 6,
 
 		-- Group 7: Spawner Engine
 		["x_mob_core.register_spawn"] = 7,
@@ -307,14 +323,35 @@ export.serializeAndExport = function(docs, outputDir)
 	if #aliases > 0 then
 		emit("## Type Aliases & Callbacks")
 		emit("")
-		emit("| Type Alias | Signature / Definition |")
-		emit("| :--- | :--- |")
+		emit("| Type Alias | Signature / Definition | Description |")
+		emit("| :--- | :--- | :--- |")
 		for _, alias in ipairs(aliases) do
 			local aname = alias.name or (alias.defines and alias.defines[1] and alias.defines[1].view) or "Unknown"
 			local def1 = alias.defines and alias.defines[1]
 			local sig = (def1 and def1.view) or "any"
 			sig = sig:gsub("\r\n", " "):gsub("\n", " "):gsub("|", "\\|")
-			emit(string.format("| `%s` | `%s` |", aname, sig))
+			local adesc = (def1 and (def1.rawdesc or def1.desc)) or (alias.desc) or ""
+			if adesc:find("\n\n```lua") then
+				local pre = adesc:sub(1, adesc:find("\n\n```lua") - 1)
+				if pre:gsub("%s+", "") ~= "" then
+					adesc = pre
+				else
+					local code_comment = adesc:match("```lua\n%-%-%s*([^\n]+)")
+					if code_comment then
+						adesc = code_comment
+					end
+				end
+			elseif adesc:find("^```lua") then
+				local code_comment = adesc:match("```lua\n%-%-%s*([^\n]+)")
+				if code_comment then
+					adesc = code_comment
+				end
+			end
+			adesc = adesc:gsub("```lua.-```", "")
+			adesc = adesc:gsub("```", "")
+			adesc = adesc:gsub("\r\n", " "):gsub("\n", " "):gsub("|", "\\|")
+			adesc = adesc:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s%s+", " ")
+			emit(string.format("| `%s` | `%s` | %s |", aname, sig, adesc))
 		end
 		emit("")
 		emit("---")
