@@ -9,9 +9,7 @@
     "tags": [
         "library",
         "mobs",
-        "api",
-        "spawning",
-        "combat"
+        "pve"
     ],
     "license": "MIT",
     "repo": "https://github.com/sakel-hub/x_mob_core",
