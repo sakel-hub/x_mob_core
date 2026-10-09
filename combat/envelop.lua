@@ -9,17 +9,6 @@
 	License: MIT
 ]]
 
----@class EnvelopEffect
----@field id string Unique identifier of the status effect
----@field duration number Total duration in seconds
----@field timer number Remaining duration in seconds
----@field texture string Visual texture applied to the envelop sleeve
----@field on_step? fun(dtime: number, target: ObjectRef) Per-step logic callback
----@field on_remove? fun(target: ObjectRef) Cleanup callback upon expiration or removal
-
----@class EnvelopTargetRecord
----@field envelop ObjectRef Envelop entity reference
----@field target ObjectRef Enveloped target reference
 local S = core.get_translator("x_mob_core")
 
 --- Active enveloped targets tracking
@@ -115,7 +104,7 @@ end
 
 -- ============================================================================
 -- 2. ENVELOP ENTITY REGISTRATION
--- Open 4-walled rectangular prism (x_mob_core_envelop_box.obj), no top/bottom caps
+-- Open 4-walled rectangular prism (x_mob_core_envelop_box.glb), no top/bottom caps
 -- ============================================================================
 
 core.register_entity("x_mob_core:envelop", {
@@ -127,7 +116,7 @@ core.register_entity("x_mob_core:envelop", {
 		selectionbox = {0, 0, 0, 0, 0, 0},
 		pointable = false, -- Attacks pass through to target underneath
 		visual = "mesh",
-		mesh = "x_mob_core_envelop_box.obj",
+		mesh = "x_mob_core_envelop_box.glb",
 		textures = {"blank.png"},
 		use_texture_alpha = true,
 		backface_culling = false,
@@ -149,6 +138,7 @@ core.register_entity("x_mob_core:envelop", {
 			collisionbox = {0, 0, 0, 0, 0, 0},
 			collide_with_objects = false,
 		})
+		self.object:play_animation("pulse", { speed = 1.0, loop = true })
 
 		-- Self-clean if spawned without target
 		if not self.target then
@@ -364,7 +354,10 @@ function x_mob_core.apply_envelop(target, effect_def)
 
 	local key = get_target_key(target)
 	local duration = effect_def.duration or 3.0
-	local texture = effect_def.texture or "blank.png"
+	local texture = effect_def.texture
+	if not texture or texture == "" or texture == "default" then
+		texture = "x_mob_core_envelop_default.png"
+	end
 
 	-- If target is already enveloped, add or refresh the effect on existing entity
 	local existing = active_envelops[key]
@@ -409,7 +402,7 @@ function x_mob_core.apply_envelop(target, effect_def)
 	local comp_tex = envelop_ent and envelop_ent:get_composite_texture() or texture
 
 	envelop_obj:set_properties({
-		mesh = "x_mob_core_envelop_box.obj",
+		mesh = "x_mob_core_envelop_box.glb",
 		visual_size = v_size,
 		textures = { comp_tex },
 		use_texture_alpha = true,
@@ -421,6 +414,7 @@ function x_mob_core.apply_envelop(target, effect_def)
 		glow = 8,
 	})
 
+	envelop_obj:play_animation("pulse", { speed = 1.0, loop = true })
 	envelop_obj:set_attach(target, "", attach_pos, {x = 0, y = 0, z = 0}, true)
 
 	active_envelops[key] = {
@@ -457,10 +451,14 @@ core.register_on_shutdown(function()
 	end
 end)
 
-return {
+---Visual Envelop and Status FX Subsystem.
+---@class EnvelopSubsystem
+local envelop = {
 	apply_envelop = x_mob_core.apply_envelop,
 	remove_envelop = x_mob_core.remove_envelop,
 	remove_envelop_effect = x_mob_core.remove_envelop_effect,
 	is_enveloped = x_mob_core.is_enveloped,
 	get_envelop_data = x_mob_core.get_envelop_data,
 }
+
+return envelop

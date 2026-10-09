@@ -91,6 +91,7 @@ create_mock_object = function(props, is_player, player_name)
 		_attach_pos = nil,
 		_hp = 20,
 		_luaentity = nil,
+		_animations = {},
 	}
 
 	function obj:is_valid() return self._valid end
@@ -111,6 +112,10 @@ create_mock_object = function(props, is_player, player_name)
 	function obj:get_attach() return self._attached_to end
 	function obj:set_detach() self._attached_to = nil end
 	function obj:set_armor_groups(g) self._armor_groups = g end
+	function obj:play_animation(track, params)
+		self._animations[track] = params or {}
+	end
+	function obj:get_animations() return self._animations end
 	function obj:remove()
 		self._valid = false
 		if self._luaentity then
@@ -143,7 +148,10 @@ print("  Running x_mob_core Envelop Subsystem Tests")
 print("==================================================")
 
 test("x_mob_core:envelop entity is registered", function()
-	assert(registered_entities["x_mob_core:envelop"] ~= nil, "Entity x_mob_core:envelop must be registered")
+	local ent_def = registered_entities["x_mob_core:envelop"]
+	assert(ent_def ~= nil, "Entity x_mob_core:envelop must be registered")
+	assert(ent_def.initial_properties.mesh == "x_mob_core_envelop_box.glb",
+		"Default mesh must be x_mob_core_envelop_box.glb")
 	assert(type(x_mob_core.apply_envelop) == "function", "x_mob_core.apply_envelop must be a function")
 	assert(type(x_mob_core.remove_envelop) == "function", "x_mob_core.remove_envelop must be a function")
 	assert(type(x_mob_core.remove_envelop_effect) == "function", "x_mob_core.remove_envelop_effect must be a function")
@@ -166,7 +174,10 @@ test("apply_envelop creates sleeve entity and attaches to target", function()
 	assert(not x_mob_core.is_enveloped(player, "venom"), "is_enveloped must return false for inactive 'venom'")
 
 	local props = env_obj:get_properties()
+	assert(props.mesh == "x_mob_core_envelop_box.glb", "Mesh must be x_mob_core_envelop_box.glb")
 	assert(props.textures[1] == "x_mobs_roots_envelop.png", "Texture must be roots texture")
+	assert(env_obj._animations["pulse"] ~= nil, "Animation track 'pulse' must be dispatched")
+	assert(env_obj._animations["pulse"].loop == true, "Animation 'pulse' must loop")
 
 	x_mob_core.remove_envelop(player)
 	assert(not x_mob_core.is_enveloped(player), "Target must no longer be enveloped after removal")
