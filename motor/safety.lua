@@ -56,6 +56,19 @@ function safety.find_nearest_shore_pos(pos, max_radius)
 	local px = math.floor(pos.x + 0.5)
 	local py = math.floor(pos.y + 0.5)
 	local pz = math.floor(pos.z + 0.5)
+
+	-- If pos is submerged in liquid, anchor vertical search around the liquid surface
+	for sy = py, py + 24 do
+		local snode = node_cache.get_node_or_nil({x = px, y = sy, z = pz})
+		local sdef = snode and core.registered_nodes[snode.name]
+		if not sdef or not sdef.liquidtype or sdef.liquidtype == "none" then
+			if sy > py then
+				py = sy - 1
+			end
+			break
+		end
+	end
+
 	local max_r = max_radius or 16
 	local max_r_sq = max_r * max_r
 
@@ -194,7 +207,7 @@ end
 ---@return number|nil surface_y Y elevation of topmost water surface in node column
 ---@return number target_vy Recommended vertical velocity to reach/maintain swimming depth
 function safety.check_in_liquid(pos, abilities, mob_height)
-	if not (abilities and abilities.can_swim) or not pos or type(pos) ~= "table" then
+	if not pos or type(pos) ~= "table" then
 		return false, false, nil, 0
 	end
 
@@ -203,7 +216,7 @@ function safety.check_in_liquid(pos, abilities, mob_height)
 	local py = math.floor(pos.y + 0.5)
 
 	local surface_y = nil
-	for iy = py + 4, py - 2, -1 do
+	for iy = py + 16, py - 2, -1 do
 		local node = node_cache.get_node_or_nil({x = px, y = iy, z = pz})
 		local def = node and core.registered_nodes[node.name]
 		if def and def.liquidtype and def.liquidtype ~= "none" then
@@ -229,7 +242,10 @@ function safety.check_in_liquid(pos, abilities, mob_height)
 	local is_submerged = (diff > 0.6)
 
 	local target_vy
-	if diff > 0.08 then
+	if abilities and abilities.is_floating then
+		is_submerged = true
+		target_vy = 3.2
+	elseif diff > 0.08 then
 		target_vy = math.min(1.8, math.max(0.4, diff * 2.2))
 	elseif diff < -0.08 then
 		target_vy = math.max(-1.2, diff * 2.5)
@@ -278,7 +294,9 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 		end
 		if f_def and f_def.liquidtype and f_def.liquidtype ~= "none" and
 		   (not abilities.can_swim or (abilities and abilities.disallow_water)) then
-			return false, "water"
+			if not (abilities and (abilities.allow_water_escape or abilities.in_liquid)) then
+				return false, "water"
+			end
 		end
 
 		local h_node = node_cache.get_node({x = target_x, y = foot_y + 1, z = target_z})
@@ -301,7 +319,7 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 					return false, "hazard"
 				end
 				if sub_def.liquidtype and sub_def.liquidtype ~= "none" and
-				   (not abilities.can_swim or (abilities and abilities.disallow_water)) then
+				   (abilities and abilities.disallow_water) then
 					return false, "water"
 				end
 				if sub_def.walkable then
@@ -397,7 +415,9 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 
 	if def_foot and def_foot.liquidtype and def_foot.liquidtype ~= "none" then
 		if not (abilities and abilities.can_swim) or (abilities and abilities.disallow_water) then
-			return false, "water"
+			if not (abilities and (abilities.allow_water_escape or abilities.in_liquid)) then
+				return false, "water"
+			end
 		end
 	end
 
@@ -414,7 +434,9 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 
 	if def_ground and def_ground.liquidtype and def_ground.liquidtype ~= "none" then
 		if not (abilities and abilities.can_swim) or (abilities and abilities.disallow_water) then
-			return false, "water"
+			if not (abilities and (abilities.allow_water_escape or abilities.in_liquid)) then
+				return false, "water"
+			end
 		end
 	end
 
@@ -424,7 +446,8 @@ function safety.is_step_safe(pos, move_dir, abilities, max_drop)
 
 	local is_solid_walkable = def_ground and def_ground.walkable and
 		not (def_ground.liquidtype and def_ground.liquidtype ~= "none")
-	local is_swimmable_water = abilities and abilities.can_swim and not (abilities and abilities.disallow_water) and (
+	local is_swimmable_water = ((abilities and abilities.can_swim and not (abilities and abilities.disallow_water)) or
+		(abilities and (abilities.allow_water_escape or abilities.in_liquid))) and (
 		(def_ground and def_ground.liquidtype and def_ground.liquidtype ~= "none") or
 		(def_foot and def_foot.liquidtype and def_foot.liquidtype ~= "none")
 	)
@@ -620,13 +643,14 @@ function safety.init_abilities(self, def)
 
 	if not self.abilities then
 		local is_aquatic = safety.is_aquatic_mob(self)
+		local is_airborne = self._inherent_abilities and self._inherent_abilities.is_floating == true
 		self.abilities = {
 			can_open_doors = false,
 			can_climb = false,
 			can_swim = is_aquatic and (self._inherent_abilities.can_swim == true) or false,
 			can_crawl = self._inherent_abilities.can_crawl == true,
 			is_floating = self._inherent_abilities.is_floating == true,
-			disallow_water = not is_aquatic,
+			disallow_water = not is_aquatic and not is_airborne,
 		}
 	end
 	self.half_width = self.half_width or def.half_width or 0.4

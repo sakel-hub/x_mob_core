@@ -88,6 +88,21 @@ function environment.step(self, dtime, def, combat_handler)
 		end
 	end
 
+	-- Immediate liquid / water mortality for dry and fragile entities (e.g. tumbleweed)
+	if def.die_in_water then
+		scratch_probe.x = pos.x
+		scratch_probe.y = foot_y
+		scratch_probe.z = pos.z
+		local touching_water = self.in_water or utils.is_water_node(scratch_probe)
+		if not touching_water then
+			scratch_probe.y = torso_y
+			touching_water = utils.is_water_node(scratch_probe)
+		end
+		if touching_water then
+			return combat_handler.apply_environmental_damage(self, self.hp_max or def._hp_max or 10, "water", def)
+		end
+	end
+
 	-- 2. Aquatic vs Terrestrial Inversion (Beaching vs Drowning)
 	local is_aquatic = (def.is_aquatic == true) or (def.shoal ~= nil) or (def.type == "aquatic")
 	if is_aquatic then

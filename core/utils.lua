@@ -198,8 +198,9 @@ end
 ---@param max_down? number Maximum distance to search downwards (default: 8)
 ---@param max_up? number Maximum distance to search upwards (default: 3)
 ---@param walkable_only? boolean If true, requires walkable non-liquid node with headroom (default: true)
+---@param allow_liquid? boolean If true, liquid surface is also accepted as ground level
 ---@return number|nil ground_y Top surface height of highest ground node, or nil
-function utils.get_ground_y(pos, max_down, max_up, walkable_only)
+function utils.get_ground_y(pos, max_down, max_up, walkable_only, allow_liquid)
 	local nx = math.floor(pos.x + 0.5)
 	local ny = math.floor(pos.y + 0.5)
 	local nz = math.floor(pos.z + 0.5)
@@ -211,7 +212,13 @@ function utils.get_ground_y(pos, max_down, max_up, walkable_only)
 		if node and node.name ~= "air" and node.name ~= "ignore" then
 			local def = core.registered_nodes[node.name]
 			if def then
-				if walkable_only ~= false then
+				if allow_liquid and def.liquidtype and def.liquidtype ~= "none" then
+					local above = core.get_node_or_nil({x = nx, y = cy + 1, z = nz})
+					local above_def = above and core.registered_nodes[above.name]
+					if not above_def or (not above_def.walkable and (not above_def.liquidtype or above_def.liquidtype == "none")) then
+						return cy + 0.5
+					end
+				elseif walkable_only ~= false then
 					if def.walkable and (not def.liquidtype or def.liquidtype == "none") then
 						local above = core.get_node_or_nil({x = nx, y = cy + 1, z = nz})
 						local above_def = above and core.registered_nodes[above.name]

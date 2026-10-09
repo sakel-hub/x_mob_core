@@ -106,11 +106,6 @@ function locomotion.apply_liquid_buoyancy(self, dtime)
 	if not self.object or not self.object:is_valid() then
 		return false, false, 0
 	end
-	local can_swim_phys = (self.can_swim == true) or (self.abilities and self.abilities.can_swim) or
-		(self._inherent_abilities and self._inherent_abilities.can_swim == true)
-	if not can_swim_phys then
-		return false, false, 0
-	end
 
 	local pos = self.object:get_pos()
 	if not pos then
@@ -118,17 +113,30 @@ function locomotion.apply_liquid_buoyancy(self, dtime)
 	end
 
 	local in_liquid, is_submerged, _, target_vy = safety.check_in_liquid(
-		pos, {can_swim = true}, self.mob_height or 1.5
+		pos, self.abilities or self._inherent_abilities, self.mob_height or 1.5
 	)
 
 	if not in_liquid then
 		if self._in_liquid then
-			locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
+			local exit_acc = self.is_floating and {x = 0, y = 0, z = 0} or {x = 0, y = -9.81, z = 0}
+			locomotion.safe_set_acceleration(self.object, exit_acc)
 			self._in_liquid = false
 			self._is_submerged = false
 			self._liquid_vy = nil
 		end
 		return false, false, 0
+	end
+
+	if self.is_floating then
+		-- Airborne flying mobs in liquid accelerate upward to breach surface into air
+		locomotion.safe_set_acceleration(self.object, {x = 0, y = 4.0, z = 0})
+		local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
+		local vy = math.max(vel.y, 3.2)
+		self.object:set_velocity({x = vel.x, y = vy, z = vel.z})
+		self._in_liquid = true
+		self._is_submerged = true
+		self._liquid_vy = 3.2
+		return true, true, 3.2
 	end
 
 	self._in_liquid = true
@@ -175,20 +183,32 @@ function locomotion.halt_horizontal_velocity(self)
 	end
 end
 
+--- Computes effective movement speed for a mob incorporating status effects (buffs/slows)
+---@param self table Mob entity instance
+---@param base_speed number Base locomotion speed
+---@return number effective_speed Multiplied speed
+function locomotion.get_effective_speed(self, base_speed)
+	if not base_speed or base_speed <= 0 then return 0 end
+	local mult = (self.object and x_mob_core.get_speed_multiplier and x_mob_core.get_speed_multiplier(self.object)) or 1.0
+	return base_speed * mult
+end
+
 --- Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity
 ---@param self table Mob entity instance
 ---@param speed number Horizontal movement speed
 ---@param yaw number Orientation angle in radians
 function locomotion.set_horizontal_velocity(self, speed, yaw)
 	if not self or not self.object or not self.object:is_valid() then return end
+	local eff_speed = locomotion.get_effective_speed(self, speed)
 	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 	local y_vel = self.in_water and (self.water_vy or self._liquid_vy or 0) or (self.is_floating and 0 or vel.y)
 	local dir = core.yaw_to_dir(yaw)
-	self.object:set_velocity({x = dir.x * speed, y = y_vel, z = dir.z * speed})
+	self.object:set_velocity({x = dir.x * eff_speed, y = y_vel, z = dir.z * eff_speed})
 	if not self.in_water and not self.is_floating then
 		locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
 	end
 end
+
 
 
 --- Detects if entity has collided with a wall/solid obstacle or is physically stagnant against one
@@ -416,7 +436,9 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 		}
 
 		local move_vec = vector.direction(current_pos, target_wpt)
-		local speed = is_pursuing and (self.pursuit_speed or 4.0) or (self.walk_speed or 1.5)
+		local raw_speed = is_pursuing and (self.pursuit_speed or 4.0) or (self.walk_speed or 1.5)
+		local speed = locomotion.get_effective_speed(self, raw_speed)
+
 
 		local dist_to_target = vector.distance(current_pos, target_wpt)
 		local move_heading
@@ -489,7 +511,8 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 
 	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 	local move_vec = vector.direction(current_pos, next_waypoint)
-	local speed = is_pursuing and (self.pursuit_speed or 4.0) or (self.walk_speed or 1.5)
+	local raw_speed = is_pursuing and (self.pursuit_speed or 4.0) or (self.walk_speed or 1.5)
+	local speed = locomotion.get_effective_speed(self, raw_speed)
 	local y_vel = vel.y
 
 	if in_ladder then
@@ -596,7 +619,7 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 	end
 	local is_aquatic = safety.is_aquatic_mob(self)
 	local in_liquid, is_subm, _, target_vy = safety.check_in_liquid(
-		current_pos, self._inherent_abilities or {can_swim = true}, self.mob_height
+		current_pos, self.abilities or self._inherent_abilities, self.mob_height
 	)
 
 	if self.can_wander == false then
@@ -646,7 +669,7 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 	if in_liquid then
 		y_vel = target_vy or 0
 	elseif self.is_floating then
-		local ground_y = utils.get_ground_y(current_pos, 24, 4, true)
+		local ground_y = utils.get_ground_y(current_pos, 24, 4, true, true)
 		local hover_h = (self.target or self.state == "fleeing" or self.state == "combat")
 			and (self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4))
 			or (self.hover_offset or 0.5)
@@ -666,7 +689,7 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 	end
 
 	local wander_abilities = self.abilities
-	if not is_aquatic then
+	if not is_aquatic and not in_liquid then
 		wander_abilities = utils.shallow_copy(self.abilities or {})
 		wander_abilities.can_swim = false
 		wander_abilities.disallow_water = true
@@ -676,7 +699,8 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 		self._last_ground_pos = {x = current_pos.x, y = current_pos.y, z = current_pos.z}
 	end
 
-	local speed = self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
+	local raw_speed = self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
+	local speed = locomotion.get_effective_speed(self, raw_speed)
 	if in_liquid then
 		speed = speed * 0.75
 	end
@@ -688,7 +712,7 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 			local chosen_yaw = nil
 
 			if in_liquid and not is_aquatic then
-				local shore_pos = safety.find_nearest_shore_pos(current_pos, 20)
+				local shore_pos = safety.find_nearest_shore_pos(current_pos, 24)
 				if not shore_pos and self._last_ground_pos then
 					shore_pos = self._last_ground_pos
 				end
@@ -704,14 +728,21 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 					local to_shore = vector.direction(current_pos, shore_pos)
 					chosen_yaw = core.dir_to_yaw(to_shore)
 					ws.is_moving = true
-					ws.timer = 2.5 + math.random() * 1.5
+					ws.timer = 2.0 + math.random() * 1.0
 					ws.yaw = chosen_yaw
 					ws.dir = {x = -math.sin(chosen_yaw), y = 0, z = math.cos(chosen_yaw)}
 					locomotion.safe_set_yaw(self.object, chosen_yaw)
 					self._cur_rot = {x = 0, y = chosen_yaw, z = 0}
+
+					local d_sq = (current_pos.x - shore_pos.x)^2 + (current_pos.z - shore_pos.z)^2
+					local shore_y_vel = y_vel
+					if d_sq < 6.25 then
+						shore_y_vel = math.max(shore_y_vel or 0, 4.5)
+					end
+
 					self.object:set_velocity({
 						x = ws.dir.x * speed,
-						y = y_vel,
+						y = shore_y_vel,
 						z = ws.dir.z * speed,
 					})
 					return {moving = true, speed = speed, has_los = false}
@@ -890,9 +921,20 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 			locomotion.safe_set_rotation(self.object, self._cur_rot)
 		end
 	else
+		local move_y_vel = y_vel
+		if in_liquid and not is_aquatic then
+			local fwd_x = math.floor(current_pos.x + ws.dir.x * 1.0 + 0.5)
+			local fwd_z = math.floor(current_pos.z + ws.dir.z * 1.0 + 0.5)
+			local fwd_y = math.floor(current_pos.y + 0.5)
+			local fwd_node = node_cache.get_node({x = fwd_x, y = fwd_y, z = fwd_z})
+			local fwd_def = core.registered_nodes[fwd_node.name]
+			if fwd_def and fwd_def.walkable and (not fwd_def.liquidtype or fwd_def.liquidtype == "none") then
+				move_y_vel = math.max(move_y_vel, 4.5)
+			end
+		end
 		self.object:set_velocity({
 			x = ws.dir.x * speed,
-			y = y_vel,
+			y = move_y_vel,
 			z = ws.dir.z * speed,
 		})
 		locomotion.safe_set_yaw(self.object, ws.yaw)
@@ -987,7 +1029,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 			elseif self.is_floating then
 				locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 				local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
-				local ground_y = utils.get_ground_y(current_pos, 8, 3, true)
+				local ground_y = utils.get_ground_y(current_pos, 8, 3, true, true)
 				if ground_y then
 					local desired_y = ground_y + combat_hover
 					local h_dy = desired_y - current_pos.y
@@ -1047,7 +1089,8 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		end
 	end
 
-	local speed = (hr and hr.flee_speed) or self.flee_speed or math.min((self.pursuit_speed or 4.0) * 1.05, 4.2)
+	local raw_speed = (hr and hr.flee_speed) or self.flee_speed or math.min((self.pursuit_speed or 4.0) * 1.05, 4.2)
+	local speed = locomotion.get_effective_speed(self, raw_speed)
 	local is_crawler = self.abilities and self.abilities.can_crawl
 
 	if is_crawler and not on_wall_or_ceiling then
@@ -1121,7 +1164,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		elseif self.is_floating then
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
-			local ground_y = utils.get_ground_y(current_pos, 24, 4, true)
+			local ground_y = utils.get_ground_y(current_pos, 24, 4, true, true)
 			if ground_y then
 				local desired_y = ground_y + combat_hover
 				local h_dy = desired_y - current_pos.y
@@ -1340,7 +1383,8 @@ function locomotion.retreat_from(self, target_pos, speed, face_away)
 
 	away = {x = away.x / a_len, y = 0, z = away.z / a_len}
 	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
-	local k_speed = speed or self.pursuit_speed or self.walk_speed or 3.0
+	local raw_speed = speed or self.pursuit_speed or self.walk_speed or 3.0
+	local k_speed = locomotion.get_effective_speed(self, raw_speed)
 
 	local cos45, sin45 = 0.7071, 0.7071
 	local candidates = {
@@ -1380,7 +1424,7 @@ function locomotion.retreat_from(self, target_pos, speed, face_away)
 		elseif self.is_floating then
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
-			local ground_y = utils.get_ground_y(pos, 24, 4, true)
+			local ground_y = utils.get_ground_y(pos, 24, 4, true, true)
 			if ground_y then
 				local desired_y = ground_y + combat_hover
 				local h_dy = desired_y - pos.y
@@ -1405,7 +1449,7 @@ function locomotion.retreat_from(self, target_pos, speed, face_away)
 		elseif self.is_floating then
 			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
-			local ground_y = utils.get_ground_y(pos, 24, 4, true)
+			local ground_y = utils.get_ground_y(pos, 24, 4, true, true)
 			if ground_y then
 				local desired_y = ground_y + combat_hover
 				local h_dy = desired_y - pos.y
@@ -1632,7 +1676,7 @@ function locomotion.step_tactical_retreat(self, dtime, def, _moveresult)
 			locomotion.safe_set_yaw(self.object, face_yaw)
 			self._cur_rot = {x = 0, y = face_yaw, z = 0}
 			if self.is_floating then
-				local ground_y = utils.get_ground_y(pos, 24, 4, true)
+				local ground_y = utils.get_ground_y(pos, 24, 4, true, true)
 				if ground_y then
 					local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
 					local desired_y = ground_y + combat_hover
@@ -1684,7 +1728,7 @@ function locomotion.step_tactical_retreat(self, dtime, def, _moveresult)
 			locomotion.safe_set_yaw(self.object, face_yaw)
 			self._cur_rot = {x = 0, y = face_yaw, z = 0}
 			if self.is_floating then
-				local ground_y = utils.get_ground_y(pos, 24, 4, true)
+				local ground_y = utils.get_ground_y(pos, 24, 4, true, true)
 				if ground_y then
 					local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
 					local desired_y = ground_y + combat_hover

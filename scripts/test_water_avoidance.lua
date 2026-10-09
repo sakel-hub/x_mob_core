@@ -58,6 +58,8 @@ local core = {
 	end,
 	line_of_sight = function() return true end,
 	get_item_group = function() return 0 end,
+	get_timeofday = function() return 0.5 end,
+	get_node_light = function() return 10 end,
 	log = function() end,
 }
 _G.core = core
@@ -496,6 +498,136 @@ local flee_res_land = locomotion.handle_mob_fleeing(land_flee_mob, 0.1, {x = 0, 
 assert_true(flee_res_land.moving, "land fleeing mob finds safe escape path away from water")
 local vel_x = (last_set_vel and last_set_vel.x) or 0
 assert_true(vel_x <= 0.1, "land fleeing mob does not rush straight into ocean water")
+
+-- 8. Test Non-Swimmer Terrestrial Mob (e.g., Chasm Weaver, can_swim = false) in Liquid
+clear_world()
+-- Water at x=0,1 from y=0 to y=1. Shore at x=2, y=1 (dirt at 1, air at 2).
+for z = -2, 2 do
+	set_node(0, 0, z, "default:water_source")
+	set_node(0, 1, z, "default:water_source")
+	set_node(0, 2, z, "air")
+	set_node(1, 0, z, "default:water_source")
+	set_node(1, 1, z, "default:water_source")
+	set_node(1, 2, z, "air")
+	set_node(2, 0, z, "default:dirt")
+	set_node(2, 1, z, "default:dirt")
+	set_node(2, 2, z, "air")
+end
+
+local non_swimmer_pos = {x = 0, y = 0, z = 0}
+local chasm_weaver_mob = {
+	name = "x_mobs:chasm_weaver",
+	can_swim = false,
+	_inherent_abilities = {can_swim = false, can_climb = false, can_crawl = true, is_floating = false},
+	abilities = {can_swim = false, can_climb = false, can_crawl = true, is_floating = false, disallow_water = true},
+	wander_state = {timer = 0, is_moving = false},
+	walk_speed = 3.8,
+	object = {
+		is_valid = function() return true end,
+		get_pos = function() return {x = 0, y = 0, z = 0} end,
+		get_yaw = function() return 0 end,
+		set_yaw = function() end,
+		get_velocity = function() return {x = 0, y = 0, z = 0} end,
+		set_velocity = function(_self, v) last_set_vel = v end,
+		get_acceleration = function() return {x = 0, y = 0, z = 0} end,
+		set_acceleration = function() end,
+		get_rotation = function() return {x = 0, y = 0, z = 0} end,
+		set_rotation = function() end,
+	},
+}
+
+local cw_in_liq, cw_subm, cw_surf, cw_tvy = safety.check_in_liquid(non_swimmer_pos, chasm_weaver_mob.abilities, 1.5)
+assert_true(cw_in_liq, "check_in_liquid detects liquid for non-swimming mob (can_swim = false)")
+assert_true(cw_subm, "non-swimming mob submerged below surface is marked is_submerged")
+assert_true(cw_surf ~= nil, "check_in_liquid resolves water surface Y")
+assert_true(cw_tvy > 0, "check_in_liquid provides positive surface buoyancy target velocity")
+
+-- apply_liquid_buoyancy must not exit early for non-swimmers
+local b_in_liq, _, _ = locomotion.apply_liquid_buoyancy(chasm_weaver_mob, 0.1)
+assert_true(b_in_liq, "apply_liquid_buoyancy applies surface buoyancy to non-swimming terrestrial mob")
+
+-- handle_mob_wandering must initiate shore escape instead of freezing
+local cw_wander_res = locomotion.handle_mob_wandering(chasm_weaver_mob, 0.1, non_swimmer_pos, false)
+assert_true(cw_wander_res.moving, "submerged non-swimming mob (chasm weaver) initiates shore escape movement")
+assert_true(chasm_weaver_mob.wander_state.dir and chasm_weaver_mob.wander_state.dir.x > 0,
+	"chasm weaver steers eastward towards shoreline")
+
+-- 9. Test Floating Mob (e.g., Armored Bug, is_floating = true) in Liquid
+local submerged_bug_pos = {x = 0, y = -1, z = 0}
+set_node(0, -1, 0, "default:water_source")
+local armored_bug_mob = {
+	name = "x_mobs:armored_bug",
+	is_floating = true,
+	_inherent_abilities = {can_swim = false, is_floating = true},
+	abilities = {can_swim = false, is_floating = true, disallow_water = false},
+	object = {
+		is_valid = function() return true end,
+		get_pos = function() return {x = 0, y = -1, z = 0} end,
+		get_velocity = function() return {x = 0, y = 0, z = 0} end,
+		set_velocity = function(_self, v) last_set_vel = v end,
+		get_acceleration = function() return {x = 0, y = 0, z = 0} end,
+		set_acceleration = function() end,
+	},
+}
+
+local bug_in_liq, _, _, bug_tvy = safety.check_in_liquid(submerged_bug_pos, armored_bug_mob.abilities, 1.0)
+assert_true(bug_in_liq, "floating bug detects liquid immersion")
+assert_true(bug_tvy >= 3.0, "floating bug receives strong positive upward escape velocity")
+
+local bug_buoy_in, _, _ = locomotion.apply_liquid_buoyancy(armored_bug_mob, 0.1)
+assert_true(bug_buoy_in, "floating bug receives buoyancy launch in liquid")
+assert_true(last_set_vel and last_set_vel.y >= 3.0, "floating bug velocity is boosted upward to exit water")
+
+-- 10. Test Floating Mob Hover Elevation and Flight Over Water
+clear_world()
+-- Water surface at y=0. Flying bug in air at y=1.8 above water
+set_node(0, 0, 0, "default:water_source")
+set_node(0, 1, 0, "air")
+set_node(0, 2, 0, "air")
+set_node(1, 0, 0, "default:water_source")
+set_node(1, 1, 0, "air")
+set_node(1, 2, 0, "air")
+local bug_air_pos = {x = 0, y = 1.8, z = 0}
+local hover_ground_y = utils.get_ground_y(bug_air_pos, 8, 3, true, true)
+assert_true(hover_ground_y ~= nil, "utils.get_ground_y detects liquid surface when allow_liquid is true")
+assert_eq(hover_ground_y, 0.5, "utils.get_ground_y returns top of water block as ground elevation")
+
+-- is_step_safe allows floating mob to fly over water when disallow_water is false
+local bug_safe_fly, fly_reason = safety.is_step_safe(bug_air_pos, {x = 1, y = 0, z = 0},
+	{is_floating = true, can_swim = false, disallow_water = false})
+assert_true(bug_safe_fly, "is_step_safe allows floating mob with disallow_water = false to fly over water")
+assert_true(fly_reason == nil, "no rejection reason when flying over non-hazardous water")
+
+-- 11. Test Spawning Conditions for Aquatic vs Non-Aquatic Mobs
+local conditions = dofile("./spawning/conditions.lua")
+local chasm_weaver_spawn_def = {
+	mob_name = "x_mobs:chasm_weaver",
+	is_aquatic = false,
+	nodes = {"default:dirt"},
+	chance = 100,
+	active_object_count = 5,
+}
+
+-- Propose spawn position at x=0, y=1 (water is at y=0, below proposed spawn pos)
+local water_spawn_pos = {x = 0, y = 1, z = 0}
+local cw_spawn_valid = conditions.check(water_spawn_pos, chasm_weaver_spawn_def, false)
+assert_false(cw_spawn_valid, "conditions.check rejects non-aquatic mob spawning on liquid surface")
+
+-- Propose spawn position submerged in water at x=0, y=0 (water at y=0 and y=-1)
+set_node(0, -1, 0, "default:water_source")
+local cw_submerged_valid = conditions.check({x = 0, y = 0, z = 0}, chasm_weaver_spawn_def, false)
+assert_false(cw_submerged_valid, "conditions.check rejects non-aquatic mob spawning submerged in liquid")
+
+-- Aquatic mob spawning in water
+local fish_spawn_def = {
+	mob_name = "x_mobs:skeleton_fish",
+	is_aquatic = true,
+	nodes = {"default:water_source"},
+	chance = 100,
+	active_object_count = 5,
+}
+local fish_spawn_valid = conditions.check({x = 0, y = 0, z = 0}, fish_spawn_def, false)
+assert_true(fish_spawn_valid, "conditions.check accepts aquatic mob spawning in water")
 
 print("==================================================")
 print(string.format("  Test Summary: %d / %d Passed (%.1f%%)", pass_count, test_count, (pass_count / test_count) * 100))

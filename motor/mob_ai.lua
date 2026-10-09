@@ -77,7 +77,7 @@ end
 ---@return number y_vel Vertical velocity
 local function calculate_floating_combat_elevation(self, current_pos, target_pos)
 	local combat_hover = self.combat_hover_offset or math.min(self.hover_offset or 0.35, 0.4)
-	local ground_y = utils.get_ground_y(current_pos, 8, 3, true)
+	local ground_y = utils.get_ground_y(current_pos, 8, 3, true, true)
 	local desired_y = ground_y and (ground_y + combat_hover) or (target_pos.y + combat_hover)
 	local h_dy = desired_y - current_pos.y
 	if math.abs(h_dy) < 0.04 then
@@ -116,24 +116,38 @@ function mob_ai.update_navigation(self, dtime)
 	self.abilities.can_crawl = inh.can_crawl == true
 	self.abilities.is_floating = inh.is_floating == true
 
+	local in_liq = check_in_liquid(current_pos, self.abilities, self.mob_height)
+	self.in_water = in_liq
 	local is_aquatic = is_aquatic_mob(self)
+	local is_airborne = (inh.is_floating == true) or (self.is_floating == true)
+
 	if is_aquatic then
 		self.abilities.can_swim = inh.can_swim == true
 		self.abilities.disallow_water = false
+		self.abilities.in_liquid = in_liq
+		self.abilities.allow_water_escape = false
+	elseif is_airborne then
+		self.abilities.can_swim = false
+		self.abilities.disallow_water = false
+		self.abilities.in_liquid = in_liq
+		self.abilities.allow_water_escape = in_liq
 	else
-		-- Terrestrial mob: swimming through water is permitted ONLY during active pursuit
-		if is_pursuing and inh.can_swim then
+		-- Terrestrial mob: swimming through water is permitted during active pursuit or emergency shore escape
+		if (is_pursuing and inh.can_swim) or in_liq then
 			self.abilities.can_swim = true
 			self.abilities.disallow_water = false
+			self.abilities.in_liquid = in_liq
+			self.abilities.allow_water_escape = in_liq
 		else
 			self.abilities.can_swim = false
 			self.abilities.disallow_water = true
+			self.abilities.in_liquid = false
+			self.abilities.allow_water_escape = false
 		end
 	end
 
 	-- Track last known solid dry ground position for terrestrial mobs
 	if not self.is_floating and not is_aquatic then
-		local in_liq = check_in_liquid(current_pos, {can_swim = true}, self.mob_height)
 		if not in_liq then
 			local cur_floor = node_cache.get_node({
 				x = math.floor(current_pos.x + 0.5),
