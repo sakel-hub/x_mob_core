@@ -1,8 +1,243 @@
 --[[
-	x_mob_core - Type Definitions & Annotations
-	EmmyLua annotations for IDE code completion and static analysis
+	x_mob_core - Type Definitions & Architectural Annotations
+	EmmyLua annotations for IDE code completion, type safety, and API documentation export.
+	Zero-dependency S.O.L.I.D. mob framework for Luanti.
+
+	Author: SaKeL
+	License: MIT
 ]]
 
+-- =========================================================================
+-- 1. CORE PRIMITIVES & ENGINE ALIASES
+-- =========================================================================
+
+---6-element bounding box in world coordinates: `{min_x, min_y, min_z, max_x, max_y, max_z}`.
+---Defines physical collision boundaries or interactive selection volumes in node units.
+---@alias Box6d number[]
+
+---Luanti color specification string (e.g. `"#FF0000"`, `"#FFFFFF60"`) or RGBA color table `{r, g, b, a}`.
+---@alias ColorSpec string|{r: integer, g: integer, b: integer, a?: integer}
+
+---Luanti armor groups mapping group names (e.g. `"fleshy"`, `"cracky"`) to damage percentage ratings.
+---A fleshy rating of 100 takes 100% damage, 80 takes 80% damage, and 0 is completely immune.
+---Setting `immortal = 1` protects the entity from engine-level death while x_mob_core manages combat.
+---@alias ArmorGroups table<string, number>
+
+---Luanti damage groups mapping group names (e.g. `"fleshy"`) to raw damage points dealt by weapons.
+---@alias DamageGroups table<string, number>
+
+---Node group capability specification inside ToolCapabilities.
+---@class ToolGroupCap
+---@field times? number[] Digging times in seconds indexed by group level
+---@field maxlevel? integer Maximum level supported for harvesting this group
+---@field uses? integer Maximum uses before tool breaking (wear per use = 65535 / uses)
+
+---Engine tool capabilities definition from Luanti item definitions or ItemStack:get_tool_capabilities().
+---Specifies full-punch intervals, group capabilities, and raw damage groups dealt to armor groups.
+---@class ToolCapabilities
+---@field full_punch_interval? number Interval in seconds required for maximum punch damage (default: 1.0)
+---@field max_drop_level? integer Maximum drop level tool can harvest (default: 0)
+---@field groupcaps? table<string, ToolGroupCap> Capability tables by node/item group (e.g. `{ cracky = ... }`)
+---@field damage_groups? DamageGroups Base damage dealt to armor groups (e.g. `{ fleshy = 6 }`)
+
+---Detailed individual collision record from Luanti physical object movement.
+---@class CollisionInfo
+---@field type "node"|"object" Type of collider impacted ("node" for voxel blocks, "object" for entities/players)
+---@field node_pos? Vector Coordinates of collided node when type == "node"
+---@field object? ObjectRef Reference to collided entity or player when type == "object"
+---@field old_velocity Vector Velocity vector of the entity before collision occurred
+---@field new_velocity Vector Velocity vector of the entity after collision response
+---@field axis "x"|"y"|"z" World axis along which collision occurred
+---@field plane? { normal: Vector } Collision contact plane normal if reported
+
+---Luanti engine moveresult table returned by physics steps and entity collision detection.
+---@class EngineMoveResult
+---@field touching_ground boolean Whether entity is in physical contact with a walkable ground surface
+---@field collides boolean Whether entity collided with any solid node or object during the step
+---@field standing_on_object boolean Whether entity is physically standing atop another ObjectRef
+---@field collisions CollisionInfo[] List of detailed collision events encountered during the step
+
+-- =========================================================================
+-- 2. RUNTIME ENTITY & EXECUTION CONTEXTS
+-- =========================================================================
+
+---Canonical state machine states coordinating mob behavior, animation, and locomotion.
+---@alias MobStateType
+---| '"idle"'        # Entity is stationary, resting, or scanning for nearby targets
+---| '"wandering"'   # Entity is passively exploring local terrain within wander_radius
+---| '"walk"'        # Entity is traversing toward an objective, waypoint, or squad position
+---| '"combat"'      # Entity has acquired a hostile target and is actively maneuvering/pursuing
+---| '"attacking"'   # Entity is executing an active melee attack animation or combat ability
+---| '"shooting"'    # Entity is executing a ranged attack windup, casting, or projectile launch
+---| '"fleeing"'     # Entity is executing a tactical retreat due to low HP or threat level
+---| '"regrouping"'  # Entity is returning to its squad leader or shoal anchor position
+---| '"flinching"'   # Entity is in hit-stun recoil from taking damage (hyper-armor checked)
+---| '"dying"'       # Entity has reached zero HP and is playing its defeat animation before removal
+---| string          # Custom user-defined state registered in custom_states
+
+---Single predictive target pursuit memory record (8-second Last Known Position tracker).
+---@class MobMemoryTargetRecord
+---@field name string Entity name of remembered target
+---@field lkp Vector Last known 3D position vector
+---@field last_seen number Timestamp of last target sighting
+---@field has_record boolean Whether target memory slot is populated
+
+---Tactical danger/threat coordinate record stored in short-term spatial memory.
+---@class MobMemoryDangerRecord
+---@field x number Danger position X coordinate
+---@field y number Danger position Y coordinate
+---@field z number Danger position Z coordinate
+---@field threat number Threat intensity score
+---@field expire number Expiration timestamp
+---@field active boolean Whether danger slot is populated
+
+---Short-term tactical spatial memory buffer tracking targets, threats, and oscillation history.
+---@class MobMemoryState
+---@field target MobMemoryTargetRecord Single predictive target pursuit record (8-second LKP)
+---@field dangers MobMemoryDangerRecord[] Pre-allocated circular buffer of active pain/danger positions
+---@field trail Vector[] Pre-allocated circular buffer of recent positions for anti-oscillation
+---@field blocked_spots Vector[] Obstruction memory for deadlock evasion
+---@field regen_timer number Elapsed time during low-HP passive health regeneration
+---@field flee_state boolean Whether entity is currently in low-HP tactical retreat
+---@field fight { x: number, y: number, z: number, valid: boolean } Combat location memory for return-to-fight logic
+
+---Lifecycle-tied scheduled timer action managed on mob entity.
+---Automatically cancels if mob dies, despawns, or transitions into flinching.
+---@class ScheduledAction
+---@field timer number Remaining seconds before callback fires
+---@field tag string Unique action tag for debugging and cancellation
+---@field callback fun(self: MobEntity) Callback executed when timer completes
+
+---Mob entity execution context passed as `self` across state machine callbacks and hooks.
+---Provides developers direct access to engine references, state variables, timers, memory, and locomotion.
+---@class MobStateContext
+---@field object ObjectRef Luanti engine C++ userdata pointer representing the active entity
+---@field name string Technical registered entity name (e.g. "x_mobs:golem")
+---@field state MobStateType Current active state identifier
+---@field previous_state? MobStateType State prior to last transition
+---@field state_timer? number Time elapsed in current state in seconds
+---@field target? ObjectRef Currently acquired hostile or pursuit target
+---@field is_dead boolean Flag indicating whether the entity is dead or dying
+---@field custom_states? table<string, CustomStateDef> Map of registered custom states
+---@field memory? MobMemoryState Short-term tactical memory buffer (LKP, threats, repulsion, trail)
+---@field action_timer? number Duration remaining for uninterruptible action; locks standard locomotion while > 0
+---@field attack_cooldown? number Global melee/combat attack cooldown timer
+---@field panic_timer? number Duration remaining for panic flee state
+---@field scan_timer? number Throttle timer for periodic target scanning
+---@field lost_sight_timer? number Seconds elapsed since losing direct line of sight to target
+---@field cooldowns? table<string, number> Named ability cooldown timers in seconds
+---@field set_cooldown fun(self: MobStateContext, key: string, duration: number) Helper to set ability cooldown
+---@field path_state? { waypoints: Vector[], index: integer, target_pos: Vector } Pathfinding traversal state
+
+---Runtime mob LuaEntity instance table representing an active mob in the world.
+---Passed as `self` across mob step callbacks, punch handlers, and custom abilities.
+---@class MobEntity
+---@field object ObjectRef Luanti engine C++ userdata pointer representing the active entity
+---@field name string Technical registered entity name (e.g. "x_mobs:spider", "mymod:golem")
+---@field hp number Current health points
+---@field hp_max number Maximum health points
+---@field state MobStateType Current active state identifier ("idle", "wander", "combat", "fleeing", etc.)
+---@field previous_state? MobStateType Previous state identifier prior to last transition
+---@field state_timer? number Time elapsed in current state in seconds
+---@field target? ObjectRef Currently acquired hostile or pursuit target
+---@field is_dead boolean Flag indicating whether the entity is dead or dying
+---@field scan_timer? number Throttle timer for periodic target scanning
+---@field action_timer? number Duration remaining for uninterruptible action (strike windup, shooting)
+---@field attack_cooldown? number Global melee or ranged combat attack cooldown timer
+---@field panic_timer? number Duration remaining for panic flee state
+---@field lost_sight_timer? number Seconds elapsed since losing direct line of sight to target
+---@field cooldowns? table<string, number> Named ability cooldown timers in seconds
+---@field collisionbox? Box6d 6-element collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? Box6d 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
+---@field texture_variations? (string[])[] List of available phenotype texture variations
+---@field texture_no? integer Currently selected texture variation index
+---@field base_texture? string[] Currently applied clean base texture list
+---@field mob_height? number Collision height in nodes
+---@field eye_offset? number Vertical eye offset in nodes
+---@field half_width? number Lateral collision half-width in nodes
+---@field walk_speed? number Base walking speed in nodes/sec
+---@field pursuit_speed? number Running pursuit speed in nodes/sec
+---@field wander_speed? number Wandering patrol speed in nodes/sec
+---@field flee_speed? number Tactical retreat speed in nodes/sec
+---@field can_wander? boolean Whether entity wanders when idle
+---@field wander_radius? number Maximum wandering patrol radius in nodes
+---@field can_swim? boolean Whether entity navigates liquid bodies
+---@field can_climb? boolean Whether entity climbs ladders, vines, and walls
+---@field can_open_doors? boolean Whether entity opens wooden doors in its path
+---@field can_crawl? boolean Whether entity navigates 1-block crawlways and ceilings
+---@field is_floating? boolean Whether entity hovers in mid-air with zero-gravity locomotion
+---@field hover_offset? number Desired hovering elevation above ground in nodes
+---@field flight_elevation? number Desired cruising elevation above ground/player in nodes
+---@field combat_hover_offset? number Desired hovering elevation above ground during combat in nodes
+---@field combat_standoff? number Desired horizontal standoff distance in front of target in combat
+---@field in_water? boolean Whether entity is currently submerged in liquid
+---@field on_wall_or_ceiling? boolean Whether climbing mob is attached to wall/ceiling
+---@field drowning_timer? number Elapsed time submerged without breath
+---@field air_timer? number Elapsed time beached on land for aquatic mobs
+---@field block_suffocation_timer? number Elapsed time head is trapped inside solid node
+---@field despawn_timer? number Sustained duration far from players before despawning
+---@field knockback_mult? number Knockback impulse multiplier (0 for unyielding)
+---@field can_flinch? boolean Whether mob flinches on punch
+---@field factions? string|string[] Faction tag or list of faction tags
+---@field faction_list? string[] Pre-parsed list of faction identifiers
+---@field _factions? table<string, boolean> Resolved fast-lookup faction membership set
+---@field _def? MobRegistrationDef Resolved registration definition table
+---@field _memory? MobMemoryState Short-term tactical spatial memory buffer
+---@field _scheduled_actions? ScheduledAction[] Active lifecycle timers scheduled via x_mob_core.schedule
+---@field _active_effects? table<string, ActiveEffectRecord> Active status effects map
+---@field _pack_id? string Assigned multi-agent pack UUID
+---@field _pack_leader? ObjectRef Pack leader entity reference
+---@field _pack_followers? ObjectRef[] Active roster of living follower ObjectRefs
+---@field _yaw? number Current facing yaw in radians
+---@field _pitch? number Current facing pitch in radians
+---@field _roll? number Current facing roll in radians
+---@field _cur_rot? Vector Current 3D rotation vector
+---@field _anim_track? string Currently playing skeletal animation track name
+---@field _anim_params? AnimationParams Currently active animation playback parameters
+---@field _health_bar_obj? ObjectRef Attached overhead health bar entity ObjectRef
+---@field _health_bar_timer? number Seconds remaining before health bar auto-hides
+---@field _damage_mod? string Active damage flash texture modifier
+---@field _regen_mod? string Active health regeneration texture modifier
+---@field _x_mob_id? string Stable unique in-memory entity identifier
+---@field _moveresult? EngineMoveResult Last physics step collision result
+---@field _killer? ObjectRef ObjectRef that inflicted the fatal punch
+---@field _drops_spawned? boolean Guard flag ensuring drops spawn only once on defeat
+---@field _despawn_handled? boolean Guard flag preventing duplicate despawn processing
+---@field _despawn_emitted? boolean Guard flag preventing duplicate on_mob_despawn event emission
+---@field _sound_timer? number Seconds remaining until next ambient sound trigger
+---@field _has_sounds? boolean Whether entity has registered sound cues
+---@field set_armor_groups fun(self: MobEntity, groups: ArmorGroups) Sets or updates armor groups
+---@field halt_horizontal_velocity fun(self: MobEntity) Halts horizontal velocity preserving gravity
+---@field set_texture fun(self: MobEntity, id: integer, vars?: (string[])[]): string[]|nil Sets texture variation
+---@field set_cooldown fun(self: MobEntity, key: string, duration: number) Sets or resets an ability cooldown
+
+-- =========================================================================
+-- 3. LOCOMOTION, ABILITIES & PATHFINDING
+-- =========================================================================
+
+---Locomotion traversal abilities, physical constraints, and routing options.
+---Passed to pathfinder functions (`find_path`, `find_path_sync`) and safety locomotion.
+---@class MobMovementDef
+---@field can_crawl? boolean Whether entity can navigate 1-block high crawlways and low ceilings (default: false)
+---Whether entity hovers or flies freely through 3D air without ground support (default: false).
+---@field is_floating? boolean
+---@field can_climb? boolean Whether entity climbs ladders, vines, and climbable walls (default: false)
+---@field can_swim? boolean Whether entity navigates water and liquid bodies (default: true)
+---Explicit flag strictly preventing pathfinder from routing through liquid (default: false).
+---@field disallow_water? boolean
+---@field can_open_doors? boolean Whether entity opens wooden doors blocking its path (default: false)
+---@field path_seed? integer Random pseudo-random seed for path jitter and diverse flanking routes (default: 0)
+---@field flank_slot? integer Multi-agent encirclement slot offsetting destination around target (default: 1)
+
+---Callback function invoked when an asynchronous A* path search completes.
+---Receives an array of solved 3D waypoint vectors on success, or `nil` if unreachable.
+---@alias PathfindingCallback fun(path: Vector[]|nil)
+
+-- =========================================================================
+-- 4. ANIMATION SUBSYSTEM
+-- =========================================================================
+
+---Optional playback parameters for skeletal animations.
 ---@class AnimationParams
 ---@field speed? number Playback speed multiplier (default: 1.0)
 ---@field loop? boolean Whether to loop animation (default: true)
@@ -10,23 +245,135 @@
 ---@field priority? number Animation track priority (default: 0)
 ---@field force? boolean Force restart track even if already playing
 
+---Named glTF or skeletal animation track mapping.
 ---@class MobAnimationDef
 ---@field track string Named glTF animation track
 ---@field speed? number Playback speed multiplier (default: 1.0)
 ---@field loop? boolean Whether to loop animation by default
 
+-- =========================================================================
+-- 5. MULTI-AGENT PACK, SWARM & SHOAL COORDINATION
+-- =========================================================================
+
+---Declarative multi-agent pack and squad coordination configuration.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`role = "member"` vs `role = "leader"`**:
+---  When `role = "member"`, `max_followers` and `spawn_on_init` are **ignored** (only leaders maintain rosters).
+---  When `role = "leader"`, `leash_distance` is **ignored** on the leader itself (followers leash to the leader).
+---- **`auto_succession = true`**: When the leader dies, surviving followers hold an election; the nearest peer
+---  promotes to new pack leader and inherits remaining followers.
+---- **`swarm_alert`**: When defined, damage or death automatically triggers pack threat alerts and writes
+---  coordinate memory for obscured pack allies.
 ---@class MobPackDef
----@field role? "leader"|"member" Role within the pack
+---@field role? "leader"|"member" Role within the pack (default: "member")
 ---@field pack_id? string Optional existing pack UUID
 ---@field leader_type? string Expected entity name of the leader
 ---@field follower_type? string|string[] Expected entity name or list of entity names of the followers
----@field max_followers? integer Max followers for a leader (default: 3)
----@field leash_distance? number Distance before followers regroup (default: 18.0)
+---@field max_followers? integer Max followers for a leader (default: 3; ignored if role is "member")
+---@field leash_distance? number Distance before followers regroup (default: 18.0; ignored on leader)
 ---@field regroup_distance? number Target distance when regrouping to leader (default: 4.0)
----@field spawn_on_init? boolean Whether leader auto-spawns initial followers on activate
+---Whether leader auto-spawns initial followers on activate (default: false; ignored if role is "member").
+---@field spawn_on_init? boolean
 ---@field auto_succession? boolean Whether surviving followers promote new leader on death (default: false)
----@field on_leader_lost? "fight"|"flee"|fun(self: table, leader?: table) Callback or behavior when pack leader dies
+---Callback or behavior when pack leader dies.
+---@field on_leader_lost? "fight"|"flee"|fun(self: MobEntity, leader?: MobEntity)
 ---@field swarm_alert? boolean|SwarmAlertDef Declarative pack & faction rally configuration on damage and death
+
+---Declarative pack/faction rally configuration evaluated automatically on damage and death.
+---Unlike imperative broadcast_threat, swarm_alert also writes coordinate memory for obscured allies.
+---@class SwarmAlertDef
+---@field enabled? boolean Whether pack threat alerting is enabled (default: true)
+---@field radius? number Search radius for alerting nearby pack allies (default: 24.0)
+---@field max_allies? integer Maximum pack members rallied per threat alert (default: 8)
+
+---Coordinated aerial swarm combat vortex and dive-bomb configuration.
+---@class SwarmCombatDef
+---@field mode? "vortex"|"direct" Combat locomotion style (default: "vortex")
+---@field orbit_radius? number Base orbit distance around target (default: 3.2)
+---@field orbit_shells? integer Concentric radial shells for multi-agent spacing (default: 3)
+---@field two_way_orbit? boolean Alternate CW and CCW orbits (default: true)
+---@field exclusion_radius? number Repulsion cylinder around target (default: 2.4)
+---@field dive_speed? number Speed during dive-bomb run (default: 6.4)
+---@field dive_range? number Distance threshold to trigger dive attack (default: 9.0)
+---@field height_offset? number Desired altitude relative to target (default: 1.0)
+---@field clamp_ceiling? boolean Prevent flying above target head (default: true)
+---@field recoil? number Horizontal pushback force after attack punch (default: 4.5)
+
+---Aerial Boids swarm intelligence, 3D flocking, and coordinated dive-bombing configuration.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`swarm.enabled = true` vs Terrestrial Movement**:
+---  Enabling `swarm` forces zero-gravity aerial flocking and vortex combat. Terrestrial walking, crawling,
+---  and stepping are **ignored**.
+---- **Collision Jamming Safeguard**:
+---  Enabling `swarm` automatically sets `collide_with_objects = false` to prevent grouped airborne entities
+---  from causing physics glitches.
+---@class SwarmConfigDef
+---@field enabled? boolean Whether swarm intelligence is active (default: true)
+---@field size? integer Total swarm cluster size (default: 4)
+---@field member_type? string Entity technical name of swarm peers (default: self.name)
+---@field repulsion_radius? number Inter-mob 3D separation radius (default: 2.2)
+---@field repulsion_strength? number Inter-mob repulsion push force (default: 2.8)
+---@field flock_radius? number Idle orbiting radius around anchor (default: 2.0)
+---@field hover_elevation? number Height anchored above walkable terrain (default: 1.4)
+---@field organic_jitter? boolean Multi-frequency harmonic velocity jitter (default: true)
+---@field micro_darts? boolean Random sudden velocity impulses with drag decay (default: true)
+---@field auto_succession? boolean Democratic election of new anchor on leader death (default: true)
+---@field stagger_attacks? boolean Offsets attack cooldowns across swarm members (default: true)
+---@field attack_cooldown_min? number Minimum cooldown before next dive attack (default: 2.5)
+---@field attack_cooldown_rand? number Random additional cooldown before next dive (default: 2.5)
+---@field combat? SwarmCombatDef Coordinated combat vortex and dive-bomb options
+
+---Aquatic fish schooling formation, 3D obstacle avoidance, and anchor steering configuration.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`shoal.enabled = true` vs Terrestrial Movement**:
+---  Enabling `shoal` forces 3D liquid schooling formations. Terrestrial walking is **ignored**.
+---- **Collision Jamming Safeguard**:
+---  Enabling `shoal` automatically sets `collide_with_objects = false` to prevent tightly clustered fish
+---  from pushing each other into block seams.
+---@class ShoalConfigDef
+---@field enabled? boolean Whether fish schooling is enabled (default: true)
+---@field size? integer Total fish in school including leader (default: 6)
+---@field member_type? string Custom technical entity name for school followers (default: self.name)
+---@field spacing_x? number Lateral distance between staggered school members (default: 2.2)
+---@field spacing_z? number Longitudinal trailing distance between school ranks (default: 1.8)
+---@field spacing_y? number Vertical depth tier spacing (default: 0.60)
+---@field wander_radius? number Leader 3D patrol radius in nodes (default: 16.0)
+---@field cull_distance? number Active player proximity distance before hibernation (default: 36.0)
+---@field predator? boolean Whether school attacks threats or flees (default: true)
+---@field auto_succession? boolean Whether surviving followers promote new leader on death (default: true)
+---@field repulsion_radius? number Separation radius in nodes (defaults to diameter + padding)
+---@field repulsion_strength? number Anti-stacking separation push multiplier (default: 2.2)
+---@field separation_padding? number Extra distance padding added on top of collisionbox diameter (default: 0.5)
+
+---Configuration options for pulsing or applying buffs to pack members via x_mob_core.apply_pack_buff.
+---@class PackBuffOptions
+---@field include_leader? boolean Whether the buff applies to the leader in addition to followers (default: true)
+---@field max_targets? integer Maximum number of pack entities affected (default: all)
+---@field sound? string Audio cue played at caster position
+---@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+
+---Configuration options for cowardice panic triggers on pack member death.
+---@class CowardicePanicOptions
+---@field radius? number Search radius for alerting fellow mobs (default: 12.0)
+---@field panic_duration? number Duration in seconds for flee state (default: 4.0)
+---@field danger_dmg? number Perceived damage recorded in danger memory (default: 10)
+
+---Periodic radius aura pulse specification applied to pack followers or nearby allies.
+---@class AuraPulseDef
+---@field id string Unique aura identifier
+---@field radius? number Pulse effect radius in blocks (default: 16.0)
+---@field effect string|StatusEffectDef Buff preset identifier or status effect definition
+---@field target? "pack_followers"|"allies"|"self" Beneficiary selector (default: "pack_followers")
+---@field max_targets? integer Maximum number of affected targets
+---@field sound? string Audio cue played at caster position
+---@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+
+-- =========================================================================
+-- 6. COMBAT, DAMAGE, FACTIONS & LOOT
+-- =========================================================================
 
 ---Individual melee attack profile for declarative single or multi-attack combat.
 ---Used inside the `attacks` array of `MeleeConfigDef`, or as a single attack definition.
@@ -57,11 +404,10 @@
 ---Additional reach buffer for moving targets at hit time (default: 0.6; ignored if aoe = true).
 ---@field reach_tolerance? number
 ---@field aoe? boolean Area of Effect flag; bypasses target range/LOS checks at impact time (requires perform_attack)
----@field on_start? fun(self: table, target?: ObjectRef) Callback executed immediately upon attack initiation
----@field on_charge? fun(self: table, target?: ObjectRef) Alias for on_start
----@field on_strike? fun(self: table, target: ObjectRef, dir: Vector) Callback executed on punch impact
----Custom melee attack callback override.
----@field perform_attack? fun(self: table, target: ObjectRef|nil, dir: Vector, def?: table, active_attack?: table)
+---@field on_start? fun(self: MobEntity, target?: ObjectRef) Callback executed immediately upon attack initiation
+---@field on_charge? fun(self: MobEntity, target?: ObjectRef) Alias for on_start
+---@field on_strike? fun(self: MobEntity, target: ObjectRef, dir: Vector) Callback executed on punch impact
+---@field perform_attack? CustomAttackCallback Custom melee attack callback override
 
 ---Declarative close-quarters melee combat configuration.
 ---When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
@@ -94,48 +440,6 @@
 ---- **`melee = false`**:
 ---  Completely disables melee combat, even if the target is within point-blank range (used for pure ranged mobs).
 ---  If `shooter` is defined and `melee` is `nil`, melee defaults to disabled.
----
----### Usage Examples:
----```lua
------ Simple single-attack melee
----melee = {
----    range = 2.4,
----    damage = 6,
----    cooldown = 1.4,
----    duration = 0.7,
----    delay = 0.35,
----    animation = "attack",
----    sound = "attack",
----    on_strike = function(self, target, dir)
----        -- Custom impact VFX or effects
----    end,
----}
----
------ Multi-attack with primary punch and weighted AoE smash
----melee = {
----    range = 3.2,
----    attacks = {
----        {
----            weight = 80,
----            animation = "punch",
----            damage = 7,
----            cooldown = 1.4,
----            delay = 0.35,
----        },
----        {
----            weight = 20,
----            animation = "smash",
----            duration = 1.4,
----            cooldown = 2.2,
----            delay = 0.40,
----            aoe = true, -- Bypasses target range check at impact time
----            perform_attack = function(self, target, dir)
----                -- Custom radial AoE blast damage
----            end,
----        },
----    },
----}
----```
 ---@class MeleeConfigDef
 ---@field range? number Melee attack reach in nodes; entry trigger for melee combat (default: def.attack_range or 2.0)
 ---@field max_height_diff? number Vertical reach tolerance in nodes (default: 2.0)
@@ -152,11 +456,10 @@
 ---@field anim_speed? number Animation playback speed multiplier (default: 1.2)
 ---@field sound? string Sound played when attacking (default: "attack")
 ---@field aoe? boolean Area of Effect flag; bypasses target range/LOS checks at impact time (requires perform_attack)
----@field on_start? fun(self: table, target?: ObjectRef) Callback executed immediately upon attack initiation
----@field on_charge? fun(self: table, target?: ObjectRef) Alias for on_start
----@field on_strike? fun(self: table, target: ObjectRef, dir: Vector) Callback executed on punch impact
----Custom melee attack callback override.
----@field perform_attack? fun(self: table, target: ObjectRef|nil, dir: Vector, def?: table, active_attack?: table)
+---@field on_start? fun(self: MobEntity, target?: ObjectRef) Callback executed immediately upon attack initiation
+---@field on_charge? fun(self: MobEntity, target?: ObjectRef) Alias for on_start
+---@field on_strike? fun(self: MobEntity, target: ObjectRef, dir: Vector) Callback executed on punch impact
+---@field perform_attack? CustomAttackCallback Custom melee attack callback override
 
 ---Declarative ranged combat, projectile firing, and tactical kiting configuration.
 ---When configured in `x_mob_core.register_mob`, the core pipeline automatically manages
@@ -177,41 +480,17 @@
 ---  If `on_fire` is provided, automatic entity spawning of `projectile` and `on_shoot` are **ignored**.
 ---  `on_fire` gives complete custom control over raycasting, multi-projectile salvos, or custom spell mechanics.
 ---- **`projectile = false`**: Explicitly disables entity spawning if `on_fire` is not used.
----- **`kiting = false`**: Disables tactical retreat when target is closer than `min_range`.
----  Allows hybrid mobs to yield to locomotion AI and close into melee range rather than kiting.
+---  `kiting = false`: Disables tactical retreat when target is closer than `min_range`.
+---  `retreat_speed` is **ignored**. Allows hybrid mobs to yield to locomotion AI.
 ---- **`shoot_while_retreating`**: If `true` (default), mob continues firing while kiting backward.
 ---  If `false`, mob holds movement to fire or only flees when target is inside `min_range`.
 ---- **`melee` vs `shooter`**: Melee (Priority 18) takes precedence when within `melee.range`.
 ---  If `def.shooter` is defined and `def.melee` is `nil`, melee defaults to disabled.
----
----### Usage Example:
----```lua
----shooter = {
----    projectile = "x_mobs:spectrum_orb",
----    range = 16.0,
----    min_range = 4.0,
----    retreat_speed = 1.2,
----    velocity = 14.0,
----    damage = 6,
----    cooldown = 3.2,
----    fire_duration = 0.8,
----    fire_delay = 0.4,
----    predict_aim = true,
----    animation = "shoot",
----    sound = "shoot",
----    on_charge = function(self, pos)
----        -- Spawn windup charging VFX
----    end,
----    on_shoot = function(self, proj_obj, dir, origin)
----        -- Custom projectile setup
----    end,
----}
----```
 ---@class ShooterConfigDef
 ---@field projectile? string|false Technical entity name of projectile (default: "x_mobs:archer_arrow"; false disables)
 ---@field range? number Maximum firing range in nodes (default: def.attack_range or 15.0)
 ---@field min_range? number Minimum distance threshold under which mob retreats (default: 0.0)
----@field retreat_speed? number Speed when kiting / backing away from player (default: 1.0)
+---@field retreat_speed? number Speed when kiting / backing away from player (default: 1.0; ignored if kiting is false)
 ---@field shoot_while_retreating? boolean Whether mob can fire projectiles while kiting / backing away (default: true)
 ---@field kiting? boolean Whether mob tactically retreats when inside min_range (default: true; false for hybrid mobs)
 ---@field cooldown? number Attack cooldown between shots in seconds (default: 2.0)
@@ -223,63 +502,32 @@
 ---@field sound? string Sound played when shooting (default: "shoot")
 ---@field state? string Entity state set while shooting (default: "attacking")
 ---@field predict_aim? boolean Whether to apply aim lead prediction based on target velocity (default: false)
----@field on_charge? fun(self: table, pos: Vector) Callback executed during firing windup / charge
+---@field on_charge? fun(self: MobEntity, pos: Vector) Callback executed during firing windup / charge
 ---Spawn callback (ignored if on_fire is set).
----@field on_shoot? fun(self: table, proj_obj: ObjectRef, dir: Vector, origin: Vector)
+---@field on_shoot? fun(self: MobEntity, proj_obj: ObjectRef, dir: Vector, origin: Vector)
 ---Custom fire callback override (bypasses projectile spawn).
----@field on_fire? fun(self: table, origin: Vector, dir: Vector, velocity: number, target_pos: Vector)
+---@field on_fire? fun(self: MobEntity, origin: Vector, dir: Vector, vel: number, target_pos: Vector)
 
+---Validation options filtering targetable objects for projectiles and shooters.
 ---@class ProjectileTargetOptions
 ---@field allow_players? boolean Whether players are valid targets (default: true)
 ---@field allow_allies? boolean Whether friendly/allied entities can be hit (default: false)
 ---@field ignore_entities? string[]|table<string, boolean> Additional entity technical names to ignore
 
+---Configuration options for step_projectile ballistics and collision handling.
 ---@class ProjectileStepOptions: ProjectileTargetOptions
 ---@field damage? number Damage applied when impacting target without on_hit_object (default: self._damage or 5)
 ---@field lifetime? number Maximum projectile lifetime in seconds before removal (default: 4.0)
 ---@field radius? number Proximity fallback collision radius in nodes (default: 1.5)
 ---@field rotate? boolean Whether to automatically rotate projectile along velocity vector (default: true)
 ---@field remove_on_hit? boolean Whether to remove projectile entity upon impact (default: true)
----@field on_hit_object? fun(self: table, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector) Object hit callback
----@field on_hit_node? fun(self: table, hit_pos: Vector, node: table) Callback when hitting a solid node
----@field on_hit? fun(self: table, hit_obj: ObjectRef|nil, hit_pos: Vector) Callback executed on any impact
----@field on_step? fun(self: table, dtime: number, pos: Vector) Callback executed on every unobstructed flight step
+---@field on_hit_object? fun(self: MobEntity, hit_obj: ObjectRef, hit_pos: Vector, dir: Vector) Object hit callback
+---Callback when hitting a solid node.
+---@field on_hit_node? fun(self: MobEntity, hit_pos: Vector, node: {name: string, param1: integer, param2: integer})
+---@field on_hit? fun(self: MobEntity, hit_obj: ObjectRef|nil, hit_pos: Vector) Callback executed on any impact
+---@field on_step? fun(self: MobEntity, dtime: number, pos: Vector) Callback executed on every unobstructed flight step
 
----@class CustomStateDef
----@field enter? fun(self: MobStateContext) Called when state is entered
----@field step fun(self: MobStateContext, dtime: number): MobStateType|nil State tick; return state name to transition
----@field exit? fun(self: MobStateContext) Called when state is exited
-
----@class StateTransitionDef
----@field from MobStateType|"*" Source state name or "*" for wildcard
----@field to MobStateType Destination state name
----@field condition fun(self: MobStateContext): boolean Condition predicate returning true to transition
----@field on_transition? fun(self: MobStateContext) Optional callback executed during transition
-
----@class SoundConfigDef
----@field name string|string[] Technical sound name or list of sound variations
----@field gain? number Volume multiplier (default: 1.0)
----@field distance? number Maximum audible distance in nodes (default: 16.0)
----@field pitch? number Base pitch multiplier (default: 1.0)
----@field pitch_jitter? number Random pitch variation factor (default: 0.05)
----@field min_interval? number Minimum cooldown between automatic triggers (default: 8.0)
----@field max_interval? number Maximum cooldown between automatic triggers (default: 22.0)
----@field chance? number Probability to play when interval expires (default: 1.0)
-
----@class MobSoundDef
----@field base? string Default sound-group name used as fallback for all categories
----@field distance? number Global default hear distance in nodes (default: 16.0)
----@field gain? number Global default volume multiplier (default: 1.0)
----@field pitch_jitter? number Global default pitch jitter factor (default: 0.05)
----@field hurt? string|SoundConfigDef Sound played on non-lethal damage
----@field death? string|SoundConfigDef Sound played on lethal damage
----@field random? string|SoundConfigDef Periodic ambient sound played during wander/idle
----@field attack? string|SoundConfigDef Sound played on melee or ranged strike
----@field alert? string|SoundConfigDef Sound played when a target is first acquired
----@field shoot? string|SoundConfigDef Sound played when firing a ranged projectile
----@field smash? string|SoundConfigDef Sound played on heavy ground smash impact
----@field summon? string|SoundConfigDef Sound played when summoning minions or pack followers
-
+---Directional combat damage hit particle preset configuration.
 ---@class DamageEffectDef
 ---@field enabled? boolean Set to false to disable default core damage particles (default: true)
 ---@field type? "blood"|"smoke"|"ichor"|"spectral"|"sparks"|"none"|string Particle effect preset style
@@ -288,59 +536,6 @@
 ---@field count? integer Base particle droplet count (default: 8)
 ---@field scale? number Particle size multiplier (default: 1.0)
 ---@field texture? string Custom texture override (e.g. "[fill:3x3:#FF0000")
-
----Declarative pack/faction rally configuration evaluated automatically by combat_handler on damage and death.
----Unlike imperative broadcast_threat, swarm_alert also writes coordinate memory for obscured allies.
----@class SwarmAlertDef
----@field enabled? boolean Whether pack threat alerting is enabled (default: true)
----@field radius? number Search radius for alerting nearby pack allies (default: 24.0)
----@field max_allies? integer Maximum pack members rallied per threat alert (default: 8)
-
----@class SwarmCombatDef
----@field mode? "vortex"|"direct" Combat locomotion style (default: "vortex")
----@field orbit_radius? number Base orbit distance around target (default: 3.2)
----@field orbit_shells? integer Concentric radial shells for multi-agent spacing (default: 3)
----@field two_way_orbit? boolean Alternate CW and CCW orbits (default: true)
----@field exclusion_radius? number Repulsion cylinder around target (default: 2.4)
----@field dive_speed? number Speed during dive-bomb run (default: 6.4)
----@field dive_range? number Distance threshold to trigger dive attack (default: 9.0)
----@field height_offset? number Desired altitude relative to target (default: 1.0)
----@field clamp_ceiling? boolean Prevent flying above target head (default: true)
----@field recoil? number Horizontal pushback force after attack punch (default: 4.5)
-
----@class SwarmConfigDef
----@field enabled? boolean Whether swarm intelligence is active (default: true)
----@field size? integer Total swarm cluster size (default: 4)
----@field member_type? string Entity technical name of swarm peers (default: self.name)
----@field repulsion_radius? number Inter-mob 3D separation radius (default: 2.2)
----@field repulsion_strength? number Inter-mob repulsion push force (default: 2.8)
----@field flock_radius? number Idle orbiting radius around anchor (default: 2.0)
----@field hover_elevation? number Height anchored above walkable terrain (default: 1.4)
----@field organic_jitter? boolean Multi-frequency harmonic velocity jitter (default: true)
----@field micro_darts? boolean Random sudden velocity impulses with drag decay (default: true)
----@field auto_succession? boolean Democratic election of new anchor on leader death (default: true)
----@field stagger_attacks? boolean Offsets attack cooldowns across swarm members (default: true)
----@field attack_cooldown_min? number Minimum cooldown before next dive attack (default: 2.5)
----@field attack_cooldown_rand? number Random additional cooldown before next dive (default: 2.5)
----@field combat? SwarmCombatDef Coordinated combat vortex and dive-bomb options
-
----@class DropEntryDef
----@field name string Technical item name (e.g. "everness:quartz_crystal")
----@field min? integer Minimum count to drop (default: 1)
----@field max? integer Maximum count to drop (default: 1)
----@field chance? number Probability to drop between 0.0 and 1.0 (default: 1.0)
-
----@class DropOptions
----@field up_vel_min? number Minimum upward launch velocity (default: 4.6)
----@field up_vel_max? number Maximum upward launch velocity (default: 5.8)
----@field spread_min? number Minimum horizontal spread velocity (default: 1.0)
----@field spread_max? number Maximum horizontal spread velocity (default: 1.6)
----@field particles? boolean Enable sparkle/burst particles (default: true)
----@field trails? boolean Enable sparkling trail attached to flying items (default: true)
----@field particle_color? string Hex color for sparkle particles
----@field particle_texture? string Optional custom base particle texture
----@field sound? string Sound identifier to play on drop
----@field killer? ObjectRef Killer object/player if applicable
 
 ---Declarative health regeneration and tactical retreat configuration.
 ---
@@ -381,6 +576,215 @@
 ---@field flee_speed? number Speed in m/s while fleeing (default: capped at 4.2 m/s for catchability, or def.flee_speed)
 ---@field max_flee_distance? number Maximum retreat distance before halting or resting (default: 15.0)
 
+---Color threshold band for dynamic overhead health bar display.
+---@class MobHealthBarColorBand
+---@field threshold number Health ratio threshold (0.0 to 1.0)
+---@field color string Hex color string (e.g. "#00FF00")
+
+---Overhead dynamic combat health bar configuration.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- Setting `health_bar = false` in `MobRegistrationDef` completely disables the overhead health bar.
+---  All options in `MobHealthBarConfig` are **ignored**.
+---- `auto_scale = true`: Width is dynamically scaled to match mob collisionbox width.
+---  `visual_size` is **ignored** when `auto_scale = true`.
+---@class MobHealthBarConfig
+---@field enabled? boolean Whether health bar is enabled for this mob (default: true)
+---@field width? integer Texture width in pixels (default: 64)
+---@field height? integer Texture height in pixels (default: 8)
+---@field border? integer Border thickness in pixels (default: 1)
+---@field border_color? string Hex color for outer border (default: "#111111")
+---@field empty_color? string Hex color for depleted health background track (default: "#330000")
+---@field colors? MobHealthBarColorBand[] List of color thresholds evaluated from highest to lowest
+---@field auto_scale? boolean Whether to proportionally scale visual_size to mob bounding box (default: true)
+---Explicit sprite visual size override in world coordinates (ignored if auto_scale is true).
+---@field visual_size? Vector2d
+---@field spacing? number Spacing in nodes above mob collisionbox top (default: 0.35)
+---@field offset_y? number Direct height offset override in nodes
+---@field timeout? number Duration in seconds before health bar auto-hides (default: 4.0)
+---@field auto_remove? boolean Whether to remove child entity on timeout (default: true)
+---@field glow? integer Light emission in dark environments 0..14 (default: 5)
+
+---Declarative loot item drop entry.
+---@class DropEntryDef
+---@field name string Technical item name (e.g. "default:diamond")
+---@field min? integer Minimum count to drop (default: 1)
+---@field max? integer Maximum count to drop (default: 1)
+---@field chance? number Probability to drop between 0.0 and 1.0 (default: 1.0)
+
+---Physics, fountain launch arc, particle trail, and audio overrides for mob item drops.
+---@class DropOptions
+---@field up_vel_min? number Minimum upward launch velocity (default: 4.6)
+---@field up_vel_max? number Maximum upward launch velocity (default: 5.8)
+---@field spread_min? number Minimum horizontal spread velocity (default: 1.0)
+---@field spread_max? number Maximum horizontal spread velocity (default: 1.6)
+---@field particles? boolean Enable sparkle/burst particles (default: true)
+---@field trails? boolean Enable sparkling trail attached to flying items (default: true)
+---@field particle_color? string Hex color for sparkle particles
+---@field particle_texture? string Optional custom base particle texture
+---@field sound? string Sound identifier to play on drop
+---@field killer? ObjectRef Killer object/player if applicable
+
+---Reactive thorns combat configuration on a target entity.
+---Reflects damage back to attackers upon taking melee damage.
+---@class ThornsDef
+---@field damage number Flat damage reflected back to attacker on melee strike
+---@field damage_type? string Damage group name for reflected damage (default: "fleshy")
+---@field chance? number Trigger probability between 0.0 and 1.0 (default: 1.0)
+
+-- =========================================================================
+-- 7. STATUS EFFECTS, ENVELOPS & VISUAL FX
+-- =========================================================================
+
+---Fullscreen responsive screen vignette configuration.
+---@class VignetteConfig
+---@field texture? string Custom texture or procedural texture modifier
+---@field color? string Hex color string (e.g. "#8A2BE240" or "#FF450050")
+---@field opacity? integer Opacity value 0-255
+---@field z_index? integer Optional z-index override (default: -10)
+
+---Visual envelop sleeve configuration wrapping the target.
+---@class EnvelopConfig
+---@field texture string Visual texture asset applied to the open rectangular sleeve
+---@field id? string Unique effect identifier
+
+---Envelop effect definition configuring visual sleeves and status hooks.
+---@class EnvelopEffectDef
+---@field id string Unique identifier of the status effect (e.g. "venom", "frost", "web")
+---@field duration number Total duration in seconds
+---@field texture string Visual texture applied to the envelop sleeve
+---@field timer? number Remaining duration in seconds
+---@field on_step? fun(dtime: number, target: ObjectRef) Per-step logic callback forwarded to envelop
+---@field on_remove? fun(target: ObjectRef) Cleanup callback upon expiration or removal
+
+---Active enveloped target tracking record linking the envelop entity and target ObjectRef.
+---@class EnvelopTargetRecord
+---@field envelop ObjectRef Envelop entity reference
+---@field target ObjectRef Enveloped target reference
+
+---Optional field overrides when applying a status effect preset via x_mob_core.apply_buff.
+---@class StatusEffectOverrideDef
+---@field duration? number Duration in seconds override
+---@field level? integer Effect intensity tier or amplifier level
+---@field speed_factor? number Speed multiplier override
+---@field damage? number Damage per tick override for DoTs
+---@field heal? number Health restored per tick override for HoTs
+---@field attack_multiplier? number Outgoing attack power multiplier override
+---@field damage_multiplier? number Incoming damage multiplier override
+---@field caster? ObjectRef Caster entity reference override
+
+---Status effect specification table configuring buffs, debuffs, DoTs, roots, and visual overlays.
+---@class StatusEffectDef
+---@field id? string Unique status effect identifier (e.g. "venom", "haste", "freeze", "ironhide")
+---@field type? "slow"|"root"|"dot"|"debuff"|"buff"|"custom" Effect archetype ("root" halts movement and jump)
+---@field category? "buff"|"debuff" Polarity category for cleansing and dispelling
+---@field chance? number Optional trigger chance (fraction 0.0-1.0 or percentage 1-100; default: 100%)
+---@field duration number Duration in seconds
+---@field speed_factor? number Movement speed fractional multiplier (e.g. 0.5 for 50% slow, 1.35 for haste)
+---@field jump_factor? number Jump fractional multiplier (e.g. 0.0 to prevent jump)
+---@field gravity_factor? number Gravity fractional multiplier
+---@field fov_factor? number Camera FOV multiplier (e.g. 0.85 for shockwave / tunnel vision)
+---@field fov_duration? number Optional sub-duration for FOV effect in seconds (defaults to effect duration)
+---@field fov_transition? number FOV transition smoothing time in seconds (default: 0.2)
+---@field damage? number Damage per interval tick for DoT
+---@field heal? number Health restored per interval tick for HoT (Health over Time)
+---@field attack_multiplier? number Outgoing damage multiplier (e.g. 1.35 for +35% attack power)
+---@field damage_multiplier? number Incoming damage multiplier while afflicted (e.g. 1.35 for brittle, 0.6 for ironhide)
+---@field knockback_resilience? number Knockback reduction factor (0.0 = full knockback, 1.0 = immovable)
+---@field cleanse_debuffs? boolean Whether active debuffs/DoTs/slows are purged upon application
+---@field thorns? ThornsDef Reactive thorns on melee attackers
+---@field interval? number Interval between DoT/HoT ticks in seconds (default: 1.0)
+---@field damage_type? string Damage group name for DoT (default: "fleshy")
+---@field caster? ObjectRef Attacking entity or player source
+---@field penetrate_armor? boolean Whether DoT bypasses armor damage reduction (default: true)
+---Particle spawner definition or generator callback for periodic ticks.
+---@field particle_spawner? ParticleSpawnerDef|fun(target: ObjectRef): ParticleSpawnerDef
+---@field envelop? EnvelopConfig Visual envelop configuration
+---@field envelop_texture? string Visual envelop sleeve texture asset
+---@field hud_vignette? string|VignetteConfig Fullscreen responsive screen vignette configuration
+---@field cleanse_in_water? boolean Whether immersion in water immediately cleanses the effect
+---@field drain_hunger? number Hunger or stamina units drained per tick via hunger_adapter
+---@field anti_heal? boolean Whether health regeneration is suppressed during effect
+---@field on_apply? fun(target: ObjectRef) Callback when effect is first applied
+---@field on_step? fun(dtime: number, target: ObjectRef) Callback on step tick (forwarded to envelop)
+---@field on_tick? fun(target: ObjectRef) Callback on periodic DoT/HoT tick (e.g. particle spawner)
+---@field on_remove? fun(target: ObjectRef) Callback when effect is removed or expires
+
+---Active status effect runtime tracking record on an afflicted player or entity.
+---@class ActiveEffectRecord : StatusEffectDef
+---@field timer number Remaining duration in seconds
+---@field token string|integer Cancellation and refresh token
+---@field has_envelop boolean Whether an envelop entity was attached
+---@field target ObjectRef Target entity or player
+
+---Luanti particle spawner definition table.
+---Supports structured range bounds, Brownian jitter, drag physics, and texture pools.
+---@class ParticleSpawnerDef
+---@field amount? integer Number of particles spawned over lifetime (default: 1)
+---@field time? number Lifetime of spawner in seconds (0 = continuous ongoing spawner)
+---@field minpos? Vector Minimum world coordinate bounds for particle birth
+---@field maxpos? Vector Maximum world coordinate bounds for particle birth
+---@field minvel? Vector Minimum initial velocity vector
+---@field maxvel? Vector Maximum initial velocity vector
+---@field minacc? Vector Minimum continuous acceleration vector (e.g. gravity `{x=0, y=-9.81, z=0}`)
+---@field maxacc? Vector Maximum continuous acceleration vector
+---@field minexptime? number Minimum particle lifespan in seconds
+---@field maxexptime? number Maximum particle lifespan in seconds
+---@field minsize? number Minimum visual particle size in nodes
+---@field maxsize? number Maximum visual particle size in nodes
+---@field collisiondetection? boolean Whether particles collide with solid walkable nodes
+---@field collision_removal? boolean Whether particles disappear upon touching solid nodes
+---@field object_collision? boolean Whether particles collide with players and entities
+---@field vertical? boolean Whether particle texture is billboarded vertically to camera
+---@field texture? string Visual texture asset filename or procedural modifier
+---@field playername? string Optional player name to restrict packet transmission to single client
+---@field attached? ObjectRef Entity ObjectRef to which the particle spawner is attached
+---@field glow? integer Light emission rating 0..14 in dark environments
+
+-- =========================================================================
+-- 8. BUFFS, AURAS, THRESHOLDS & IMMUNITIES
+-- =========================================================================
+
+---Periodic radial aura emitted by mob commanders or totems.
+---@class MobAuraDef
+---@field id string Unique aura identifier
+---@field interval? number Seconds between pulses (default: 5.0)
+---@field radius? number Spatial radius in nodes (default: 16.0)
+---@field target? "pack_followers"|"allies"|"self" Target filter selector (default: "pack_followers")
+---@field effect string|StatusEffectDef Effect preset name or custom definition
+---@field sound? string Audio cue played at caster position
+---@field vfx? string|fun(pos: Vector) Declarative VFX preset or callback
+---@field max_targets? integer Maximum number of affected targets
+
+---Reactive HP threshold trigger for boss phase shifts or rage mechanics.
+---@class MobThresholdDef
+---@field id? string Unique threshold identifier
+---@field hp_ratio number HP percentage trigger (e.g. 0.35 for <= 35% HP)
+---@field once? boolean Whether this triggers only once per spawn lifecycle (default: true)
+---@field cleanse? boolean Whether to automatically purge debuffs upon triggering
+---@field effect? string|StatusEffectDef Effect preset name or custom definition
+---@field sound? string Audio cue played on trigger
+---@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+
+---Event-driven reaction triggered by taking damage.
+---@class MobTriggerDef
+---@field id? string Unique trigger identifier
+---@field event "on_damaged"|"on_heavy_damage" Trigger event
+---@field cooldown? number Internal cooldown in seconds (default: 10.0)
+---@field threshold_damage? number Damage threshold for on_heavy_damage (default: 25% max HP)
+---@field cleanse? boolean Whether to automatically purge debuffs upon triggering
+---@field effect? string|StatusEffectDef Effect preset name or custom definition
+---@field sound? string Audio cue played on trigger
+---@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+
+---Declarative buffs, periodic auras, HP thresholds, and event triggers.
+---@class MobBuffsDef
+---@field auras? MobAuraDef[] Periodic radial auras emitted by commanders/totems
+---@field thresholds? MobThresholdDef[] Reactive HP threshold events (e.g. Phase 2 Enrage)
+---@field triggers? MobTriggerDef[] Event-driven reactions (on_damaged, on_heavy_damage)
+
+---Environmental hazard immunities table.
+---Setting `immunities` supersedes legacy flat flags (`immune_to_lava`, `immune_to_fire`, `immune_to`).
 ---@class MobImmunitiesDef
 ---@field environment? boolean Immune to all ambient environmental hazard node DPS
 ---@field damage_per_second? boolean Immune to node damage_per_second
@@ -389,19 +793,174 @@
 ---@field drown? boolean Immune to water drowning
 ---@field suffocation? boolean Immune to solid block asphyxiation
 
----@class MobBoneDef
----@field pivot? Vector|{x: number, y: number, z: number} Pivot offset for bone attachments and inverse kinematics
----@field rotation? Vector|{x: number, y: number, z: number} Default bone orientation rotation
----@field position? Vector|{x: number, y: number, z: number} Bone position offset
+-- =========================================================================
+-- 9. SPAWNER ENGINE & NATURAL SPAWNING
+-- =========================================================================
 
+---Environmental condition filters and population limits for natural mob spawning.
+---
+---### Attribute Precedence & Mutual Exclusivity:
+---- **`is_aquatic = true` vs `nodes`**:
+---  When `is_aquatic = true`, the spawner validates that the spawn position is submerged inside
+---  liquid nodes (`group:water`) rather than standing on top of dry surface nodes.
+---- **`day_only = true` vs `night_only = true` vs `min_time` / `max_time`**:
+---  `day_only = true` restricts spawning to daytime (0.20 <= time <= 0.80).
+---  `night_only = true` restricts spawning to nighttime (time < 0.20 or time > 0.80).
+---  `min_time` and `max_time` define explicit time windows; when provided, they take precedence
+---  over `day_only` and `night_only`.
+---- **`exclude_nodes` & `exclude_groups`**:
+---  Checked after matching `nodes`. If a node matches `nodes` but is listed in `exclude_nodes` or
+---  `exclude_groups`, spawning is aborted.
+---@class SpawnConfig
+---@field nodes? string[] Valid ground node names or group filters (e.g. `{"default:dirt_with_grass", "group:sand"}`)
+---Specific nodes to explicitly exclude from spawning (e.g. `{"default:river_water_source"}`).
+---@field exclude_nodes? string[]
+---@field exclude_groups? string[] Node groups to explicitly exclude from spawning (e.g. `{"river_water"}`)
+---@field is_aquatic? boolean Whether mob spawns submerged inside liquid rather than on surface (default: false)
+---@field biomes? string[] Optional list of biome technical names (e.g. `{"everness:crystal_forest"}`)
+---@field chance? integer 1 in X chance per mapblock evaluation tick (default: 1000)
+---Max nearby instances of this entity allowed within active block radius (default: 1).
+---@field active_object_count? integer
+---@field max_total_in_radius? integer Max total living entities of any type allowed in radius (default: 8)
+---@field group_min? integer Minimum entities to spawn in a pack/swarm (default: 1)
+---@field group_max? integer Maximum entities to spawn in a pack/swarm (default: 1)
+---@field day_only? boolean Only spawn during daytime (0.20 <= time <= 0.80)
+---@field night_only? boolean Only spawn during nighttime (time < 0.20 or time > 0.80)
+---@field min_time? number Specific minimum time-of-day (0.0 to 1.0; takes precedence over day/night flags)
+---@field max_time? number Specific maximum time-of-day (0.0 to 1.0; takes precedence over day/night flags)
+---@field min_light? integer Minimum light level 0..15 (default: 0)
+---@field max_light? integer Maximum light level 0..15 (default: 15)
+---@field min_elevation? number Minimum Y coordinate (default: -31000)
+---@field max_elevation? number Maximum Y coordinate (default: 31000)
+---@field mob_name? string Optional entity technical name override
+---@field _parsed_nodes? table<string, boolean> Pre-parsed fast-lookup map of allowed node names
+---@field _parsed_groups? table<string, boolean> Pre-parsed fast-lookup map of allowed node group names
+---@field _parsed_biomes? table<string, boolean> Pre-parsed fast-lookup map of allowed biome names
+---@field _parsed_exclude_nodes? table<string, boolean> Pre-parsed fast-lookup map of excluded node names
+---@field _parsed_exclude_groups? table<string, boolean> Pre-parsed fast-lookup map of excluded node group names
+
+---Registered natural spawn rule linking an entity name with environmental spawning parameters.
+---@class SpawnDefinition : SpawnConfig
+---@field mob_name? string Entity technical name (e.g. "x_mobs:spider")
+
+-- =========================================================================
+-- 10. AUDIO & SOUND SUBSYSTEM
+-- =========================================================================
+
+---Detailed sound trigger configuration with volume, hearing distance, pitch jitter, and throttle intervals.
+---@class SoundConfigDef
+---@field name string|string[] Technical sound name or list of sound variations
+---@field gain? number Volume multiplier (default: 1.0)
+---@field distance? number Maximum audible distance in nodes (default: 16.0)
+---@field pitch? number Base pitch multiplier (default: 1.0)
+---@field pitch_jitter? number Random pitch variation factor (default: 0.05)
+---@field min_interval? number Minimum cooldown between automatic triggers in seconds (default: 8.0)
+---@field max_interval? number Maximum cooldown between automatic triggers in seconds (default: 22.0)
+---@field chance? number Probability to play when interval expires (default: 1.0)
+
+---Acoustic sound feedback configuration mapping event categories to sounds.
+---@class MobSoundDef
+---@field base? string Default sound-group name used as fallback for all categories
+---@field distance? number Global default hear distance in nodes (default: 16.0)
+---@field gain? number Global default volume multiplier (default: 1.0)
+---@field pitch_jitter? number Global default pitch jitter factor (default: 0.05)
+---@field hurt? string|SoundConfigDef Sound played on non-lethal damage
+---@field death? string|SoundConfigDef Sound played on lethal damage
+---@field random? string|SoundConfigDef Periodic ambient sound played during wander/idle
+---@field attack? string|SoundConfigDef Sound played on melee or ranged strike
+---@field alert? string|SoundConfigDef Sound played when a target is first acquired
+---@field shoot? string|SoundConfigDef Sound played when firing a ranged projectile
+---@field smash? string|SoundConfigDef Sound played on heavy ground smash impact
+---@field summon? string|SoundConfigDef Sound played when summoning minions or pack followers
+
+---Positional audio parameter overrides passed to x_mob_core.play_sound.
+---@class SoundOverrides
+---@field gain? number Volume gain multiplier (default: 1.0)
+---@field distance? number Maximum audible hearing distance in nodes (default: 16.0)
+---@field pitch? number Pitch multiplier (default: 1.0)
+---@field pos? Vector World coordinate override for sound emitter
+---@field object? ObjectRef Entity ObjectRef override to attach sound playback to
+---@field to_player? string Play sound privately to a single connected player name
+---@field loop? boolean Whether audio track loops indefinitely until stopped
+
+-- =========================================================================
+-- 11. STATE MACHINE & MIDDLEWARE HOOKS
+-- =========================================================================
+
+---Custom state machine state handlers table.
+---@class CustomStateDef
+---@field enter? fun(self: MobStateContext) Called when state is entered
+---@field step fun(self: MobStateContext, dtime: number): MobStateType|nil State tick; return state name to transition
+---@field exit? fun(self: MobStateContext) Called when state is exited
+
+---Declarative state transition rule.
+---@class StateTransitionDef
+---@field from MobStateType|"*" Source state name or "*" for wildcard
+---@field to MobStateType Destination state name
+---@field condition fun(self: MobStateContext): boolean Condition predicate returning true to transition
+---@field on_transition? fun(self: MobStateContext) Optional callback executed during transition
+
+---Pre-combat custom ability interception hook handler.
+---Executed at Priority 15 in the middleware pipeline prior to declarative melee and shooter logic.
+---Return `true` to halt the pipeline (e.g. while casting spells, summoning minions, in tactical standoff).
+---Return `false` or `nil` to fall through into standard declarative melee and ranged attacks.
+---@alias CustomStepHandler fun(self: MobEntity, dt: number, res?: EngineMoveResult, def?: MobRegistrationDef): boolean?
+
+---Step hook callback invoked on every server step for living mob entities.
+---
+---Return values:
+---- Return `true` to **intercept** step handling: cancels subsequent pipeline hooks
+---  from firing on this tick, and bypasses default pursuit and wandering locomotion.
+---- Return `false` or `nil` to allow subsequent pipeline hooks and normal mob locomotion to proceed.
+---@alias StepHookHandler fun(self: MobEntity, dtime: number, def: MobRegistrationDef, res?: EngineMoveResult): boolean?
+
+---Standard pub-sub event names emitted across mob lifecycles on the x_mob_core event bus.
+---@alias CoreEventName string
+---| '"on_mob_spawn"'
+---| '"on_mob_death"'
+---| '"on_mob_despawn"'
+---| '"on_mob_hurt"'
+---| '"on_mob_target"'
+---| '"on_mob_rightclick"'
+
+---Callback function invoked when a pub-sub event is emitted on the event bus.
+---@alias EventListenerCallback fun(...: any)
+
+---Tool capabilities shorthand alias for compact callback annotations.
+---@alias ToolCaps ToolCapabilities
+
+---Callback invoked when an entity is punched by a player or another entity.
+---@alias MobPunchCallback fun(self: MobEntity, src: ObjectRef, tflp: number, caps: ToolCaps, dir: Vector, dmg: number)
+
+-- =========================================================================
+-- 12. MOB REGISTRATION DEFINITION & OBJECT PROPERTIES
+-- =========================================================================
+
+---Bone attachment pivot and structural orientation definition.
+---@class MobBoneDef
+---@field pivot? Vector Pivot offset for bone attachments and inverse kinematics
+---@field rotation? Vector Default bone orientation rotation
+---@field position? Vector Bone position offset
+
+---Granular conditions evaluated to determine if a mob should despawn.
+---@class DespawnConditionsDef
+---@field daylight? boolean Despawn when exposed to daytime sunlight (default: false)
+---@field min_natural_light? integer Natural sunlight threshold (default: 11)
+---@field min_time? number Time of day window start (0.0 to 1.0)
+---@field max_time? number Time of day window end (0.0 to 1.0)
+---@field time_range? { min: number, max: number } Custom time-of-day despawn window
+---@field require_natural_light? boolean If true, time_range despawn only applies if exposed to natural sunlight
+
+---Engine object properties table configured in Luanti ObjectRef properties.
+---Can be specified inside `initial_properties` or directly at top-level in `MobRegistrationDef`.
 ---@class MobInitialPropertiesDef
 ---@field hp_max? number Maximum health points (synced to ObjectRef properties and engine HP)
 ---@field mesh? string 3D model mesh filename (.glb, .gltf, or .b3d)
 ---@field textures? string[] List of texture filenames or texture modifier strings
 ---@field visual? "mesh"|"cube"|"sprite" Visual rendering mode (default: "mesh" if mesh is specified)
----@field visual_size? Vector2d|Vector|{x: number, y: number, z?: number} Visual model scale factors
----@field collisionbox? number[] 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
----@field selectionbox? table|number[] 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
+---@field visual_size? Vector2d|Vector Visual model scale factors
+---@field collisionbox? Box6d 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? Box6d 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
 ---@field physical? boolean Whether entity is subject to physical collisions (default: true)
 ---@field collide_with_objects? boolean Whether entity collides with other entities and players (default: true)
 ---@field stepheight? number Maximum step-up height in nodes (default: 1.1)
@@ -410,8 +969,8 @@
 ---@field backface_culling? boolean Whether backfaces of the 3D model are culled (default: true)
 ---@field glow? integer Light emission level in dark environments 0..14 (default: 0)
 ---@field nametag? string Overhead nametag text
----@field nametag_color? string|table Nametag text color
----@field nametag_bgcolor? string|table Nametag background color
+---@field nametag_color? ColorSpec Nametag text color
+---@field nametag_bgcolor? ColorSpec Nametag background color
 ---@field infotext? string Tooltip text displayed when player points at the entity
 ---@field static_save? boolean Whether entity persists in block static data across server restarts (default: true)
 ---@field shaded? boolean Whether mesh is affected by world lighting (default: true)
@@ -456,14 +1015,14 @@
 ---  flags (`immune_to_lava`, `immune_to_fire`, `immune_to`).
 ---@class MobRegistrationDef
 ---@field name? string Technical entity name (e.g. "x_mobs:spider", "mymod:golem")
----@field initial_properties? MobInitialPropertiesDef|table Luanti ObjectRef properties table (hp, mesh, boxes, etc.)
+---@field initial_properties? MobInitialPropertiesDef Luanti ObjectRef properties table (hp, mesh, boxes, etc.)
 ---@field textures? string|string[]|(string[])[] Texture filename, list of textures, or phenotype variations
 ---@field mesh? string 3D model mesh filename (.glb, .gltf, or .b3d)
 ---@field visual? "mesh"|"cube"|"sprite" Visual rendering mode (default: "mesh" if mesh is specified)
----@field visual_size? Vector2d|Vector|{x: number, y: number, z?: number} Visual model scale factors
+---@field visual_size? Vector2d|Vector Visual model scale factors
 ---@field hp_max? number Maximum health points (synced to ObjectRef properties and engine HP, default: 20)
----@field collisionbox? number[] 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
----@field selectionbox? table|number[] 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
+---@field collisionbox? Box6d 6-element bounding collision box: {minx, miny, minz, maxx, maxy, maxz}
+---@field selectionbox? Box6d 6-element selection box: {minx, miny, minz, maxx, maxy, maxz}
 ---@field physical? boolean Whether entity is subject to physical collisions (default: true)
 ---@field collide_with_objects? boolean Whether entity collides with other entities and players (default: true)
 ---@field stepheight? number Maximum step-up height in nodes (default: 1.1)
@@ -472,8 +1031,8 @@
 ---@field backface_culling? boolean Whether backfaces of the 3D model are culled (default: true)
 ---@field glow? integer Light emission level in dark environments 0..14 (default: 0)
 ---@field nametag? string Overhead nametag text
----@field nametag_color? string|table Overhead nametag text color
----@field nametag_bgcolor? string|table Overhead nametag background color
+---@field nametag_color? ColorSpec Overhead nametag text color
+---@field nametag_bgcolor? ColorSpec Overhead nametag background color
 ---@field infotext? string Tooltip text displayed when player points at the entity
 ---@field static_save? boolean Whether entity persists in block static data across server restarts (default: true)
 ---@field shaded? boolean Whether mesh is shaded by world lighting (default: true)
@@ -507,22 +1066,23 @@
 ---@field mob_type? "aquatic"|"monster"|"animal"|string Alternative entity category classifier
 ---@field can_breathe? boolean Whether entity breathes air (false for aquatic mobs)
 ---@field can_fly_in_water? boolean Whether aquatic mob flies/glides in water
----@field abilities? table Optional explicit abilities configuration table overrides
+---@field abilities? MobMovementDef Optional explicit abilities configuration table overrides
 ---@field auto_scan? boolean Whether mob automatically scans for nearby player targets (default: true)
 ---@field aggro_radius? number Player and target detection range in nodes (default: 16.0)
 ---@field attack_range? number Melee attack reach in nodes (default: 2.0)
 ---@field damage? number Base melee strike damage dealt to targets (default: 4)
 ---@field attack_interval? number Cooldown between attacks in seconds (default: 1.2)
 ---@field scan_interval? number Frequency of target scanning in seconds (default: 0.4)
----@field armor_groups? table<string, number> Luanti armor groups (e.g. {fleshy = 80, cracky = 70})
+---@field armor_groups? ArmorGroups Luanti armor groups (e.g. {fleshy = 80, cracky = 70})
 ---@field knockback_mult? number Knockback impulse multiplier (0 for unyielding/immune, default: 1.5)
----@field can_flinch? boolean|fun(self: table): boolean Whether mob flinches on punch (default: true)
+---@field can_flinch? boolean|fun(self: MobEntity): boolean Whether mob flinches on punch (default: true)
 ---@field factions? string|string[] Faction tag or list of faction tags (default: "monsters")
 ---@field friendly_fire? boolean Whether allies/same-faction can damage this mob (default: false)
 ---@field cooldowns? table<string, number> Initial named cooldown timers in seconds (decremented per tick)
 ---@field health_regen? number|boolean|HealthRegenDef Health regen rate, disable toggle, or config table
----@field on_regen_step? fun(self: table, hp_added: number) Optional callback executed on each health regeneration step
----@field on_return_to_fight? fun(self: table) Optional callback executed when mob recovers HP and exits fleeing
+---Optional callback executed on each health regeneration step.
+---@field on_regen_step? fun(self: MobEntity, hp_added: number)
+---@field on_return_to_fight? fun(self: MobEntity) Optional callback executed when mob recovers HP and exits fleeing
 ---@field immunities? MobImmunitiesDef Environmental hazard immunities table
 ---@field can_breathe_water? boolean Whether terrestrial mob can breathe underwater without drowning
 ---@field amphibious? boolean Whether mob is amphibious (immune to both drowning and beach suffocation)
@@ -540,6 +1100,7 @@
 ---@field animations? table<string, MobAnimationDef|string> Declarative glTF skeletal animations map
 ---@field bones? table<string, MobBoneDef> Bone attachment pivots and structural metadata map
 ---@field pack? MobPackDef Pack and squad coordination options
+---@field buffs? MobBuffsDef Declarative buffs, auras, thresholds, and reactive triggers
 ---@field swarm? SwarmConfigDef Swarm intelligence, 3D flocking, and vortex combat configuration
 ---@field shoal? ShoalConfigDef Fish schooling, 3D boundary avoidance, and anchor steering configuration
 ---@field melee? boolean|MeleeConfigDef Declarative melee combat configuration (false disables)
@@ -552,116 +1113,63 @@
 ---@field swarm_alert? boolean|SwarmAlertDef Declarative pack & faction rally configuration on damage and death
 ---@field custom_states? table<string, CustomStateDef> Custom state machine states map
 ---@field transitions? StateTransitionDef[] Declarative state transition rules
----@field hooks? table<string, fun(self: table, ...)> Lifecycle hook callbacks
+---@field hooks? table<string, fun(self: MobEntity, ...: any)> Lifecycle hook callbacks
 ---@field custom_step? CustomStepHandler Pre-combat custom ability hook (return true to intercept)
----@field on_activate? fun(self: table, staticdata: table|string, dtime_s: number, raw?: string) Called on activation
----@field on_step? fun(self: table, dtime: number, moveresult?: table) Callback on each physics/logic step
----@field on_punch? fun(self: table, puncher: ObjectRef, tflp: number, tool_caps: table, dir: Vector, damage: number)
----@field on_hurt? fun(self: table, puncher: ObjectRef|nil, damage: number) Callback invoked on taking damage
----@field on_death? fun(self: table, killer: ObjectRef|nil) Callback invoked when entity dies
----@field on_rightclick? fun(self: table, clicker: ObjectRef): any Callback invoked when entity is right-clicked
----@field on_deactivate? fun(self: table, removal: boolean) Called when entity is unloaded or removed
----@field on_despawn? fun(self: table, reason?: string) Callback when entity despawns gracefully
----@field get_staticdata? fun(self: table): string|table Callback returning serialized state for persistence
----@field perform_attack? fun(self: table, target: ObjectRef, dir: Vector) Custom melee attack callback
----@field on_action_end? fun(self: table) Callback executed when action_timer completes
+---@field on_activate? fun(self: MobEntity, staticdata: string, dtime_s: number, raw?: string) Called on activation
+---Callback on each physics and logic step.
+---@field on_step? fun(self: MobEntity, dtime: number, moveresult?: EngineMoveResult)
+---@field on_punch? MobPunchCallback Callback invoked when entity is punched
+---@field on_hurt? fun(self: MobEntity, puncher: ObjectRef|nil, damage: number) Callback invoked on taking damage
+---@field on_death? fun(self: MobEntity, killer: ObjectRef|nil) Callback invoked when entity dies
+---@field on_rightclick? fun(self: MobEntity, clicker: ObjectRef): any Callback invoked when entity is right-clicked
+---@field on_deactivate? fun(self: MobEntity, removal: boolean) Called when entity is unloaded or removed
+---@field on_despawn? fun(self: MobEntity, reason?: string) Callback when entity despawns gracefully
+---@field get_staticdata? fun(self: MobEntity): string Callback returning serialized state for persistence
+---@field perform_attack? fun(self: MobEntity, target: ObjectRef, dir: Vector) Custom melee attack callback
+---@field on_action_end? fun(self: MobEntity) Callback executed when action_timer completes
 
----@class DespawnConditionsDef
----@field daylight? boolean Despawn when exposed to daytime sunlight (default: false)
----@field min_natural_light? integer Natural sunlight threshold (default: 11)
----@field min_time? number Time of day window start (0.0 to 1.0)
----@field max_time? number Time of day window end (0.0 to 1.0)
----@field time_range? { min: number, max: number } Custom time-of-day despawn window
----@field require_natural_light? boolean If true, time_range despawn only applies if exposed to natural sunlight
+-- =========================================================================
+-- 13. SUBSYSTEM NAMESPACE CONTAINERS
+-- =========================================================================
 
----@class ShoalConfigDef
----@field enabled? boolean Whether fish schooling is enabled (default: true)
----@field size? integer Total fish in school including leader (default: 6)
----@field member_type? string Custom technical entity name for school followers (default: self.name)
----@field spacing_x? number Lateral distance between staggered school members (default: 2.2)
----@field spacing_z? number Longitudinal trailing distance between school ranks (default: 1.8)
----@field spacing_y? number Vertical depth tier spacing (default: 0.60)
----@field wander_radius? number Leader 3D patrol radius in nodes (default: 16.0)
----@field cull_distance? number Active player proximity distance before hibernation (default: 36.0)
----@field predator? boolean Whether school attacks threats or flees (default: true)
----@field auto_succession? boolean Whether surviving followers promote new leader on death (default: true)
----@field repulsion_radius? number Separation radius in nodes (defaults to diameter + padding)
----@field repulsion_strength? number Anti-stacking separation push multiplier (default: 2.2)
----@field separation_padding? number Extra distance padding added on top of collisionbox diameter (default: 0.5)
+---Modular motor and locomotion subsystem coordinator container.
+---@class MobMotorSubsystems
+---@field node_cache NodeCacheSubsystem Node lookup cache
+---@field doors DoorsSubsystem Door opening handler
+---@field surface SurfaceSubsystem Surface climbing and normal rotation
+---@field safety SafetySubsystem Ground and corridor safety analyzer
+---@field locomotion LocomotionSubsystem Velocity, damping, and retreat steering
+---@field ai MobAISubsystem High-level motor AI and pursuit coordinator
 
----@class MobHealthBarColorBand
----@field threshold number Health ratio threshold (0.0 to 1.0)
----@field color string Hex color string (e.g. "#00FF00")
+---Combat calculation, damage effects, and projectile subsystem container.
+---@class MobCombatSubsystems
+---@field damage DamageSubsystem Damage and armor group calculator
+---@field knockback KnockbackSubsystem Knockback calculation and dampening
+---@field effects EffectsSubsystem Damage flash and texture overlays
+---@field detachment DetachmentSubsystem Child object and arrow detachment
+---@field loot LootSubsystem Parabolic drop fountains
+---@field melee MeleeSubsystem Declarative close-quarters melee combat
+---@field shooter ShooterSubsystem Projectiles, aim prediction, and ranged kiting
+---@field factions FactionsSubsystem Allegiance and enemy resolution
+---@field health_bar HealthBarSubsystem Dynamic overhead health bars
+---@field particles ParticlesSubsystem Attached particle spawners
+---@field envelop EnvelopSubsystem Visual sleeve envelops
+---@field hunger_adapter HungerAdapterSubsystem Hunger and stamina draining
+---@field hud_effects HudEffectsSubsystem Fullscreen screen vignettes
+---@field status_effects StatusEffectsSubsystem Status effects, buffs, and debuffs
 
----@class MobHealthBarConfig
----@field enabled? boolean Whether health bar is enabled for this mob (default: true)
----@field width? integer Texture width in pixels (default: 64)
----@field height? integer Texture height in pixels (default: 8)
----@field border? integer Border thickness in pixels (default: 1)
----@field border_color? string Hex color for outer border (default: "#111111")
----@field empty_color? string Hex color for depleted health background track (default: "#330000")
----@field colors? MobHealthBarColorBand[] List of color thresholds evaluated from highest to lowest
----@field auto_scale? boolean Whether to proportionally scale visual_size to mob bounding box (default: true)
----@field visual_size? Vector2d Explicit sprite visual size override in world coordinates
----@field spacing? number Spacing in nodes above mob collisionbox top (default: 0.35)
----@field offset_y? number Direct height offset override in nodes
----@field timeout? number Duration in seconds before health bar auto-hides (default: 4.0)
----@field auto_remove? boolean Whether to remove child entity on timeout (default: true)
----@field glow? integer Light emission in dark environments 0..14 (default: 5)
+---Multi-agent squad, pack, swarm, and shoal coordination container.
+---@class MobPackSubsystems
+---@field squad SquadSubsystem Squad formation and roster management
+---@field coordination CoordinationSubsystem Pack threat alerts, leashing, and buff distribution
+---@field swarm SwarmSubsystem Aerial Boids flocking and dive-bombing
+---@field shoal ShoalSubsystem Aquatic schooling formation steering
 
----@class SpawnConfig
----@field nodes? string[] Valid ground node names or group filters (e.g. "group:water")
----@field exclude_nodes? string[] Specific nodes to explicitly exclude from spawning (e.g. "default:river_water_source")
----@field exclude_groups? string[] Node groups to explicitly exclude from spawning (e.g. "river_water")
----@field is_aquatic? boolean Whether mob spawns submerged inside liquid rather than on surface
----@field biomes? string[] Optional list of biome technical names (e.g. {"everness:crystal_forest"})
----@field chance? integer 1 in X chance per tick (default: 1000)
----@field active_object_count? integer Max nearby instances allowed (default: 1)
----@field max_total_in_radius? integer Max total living mobs allowed in spawn radius (default: 8)
----@field group_min? integer Minimum entities to spawn in a pack/swarm (default: 1)
----@field group_max? integer Maximum entities to spawn in a pack/swarm (default: 1)
----@field day_only? boolean Only spawn during daytime (0.20 <= time <= 0.80)
----@field night_only? boolean Only spawn during nighttime (time < 0.20 or time > 0.80)
----@field min_time? number Specific minimum time-of-day (0.0 to 1.0)
----@field max_time? number Specific maximum time-of-day (0.0 to 1.0)
----@field min_light? integer Minimum light level 0..15 (default: 0)
----@field max_light? integer Maximum light level 0..15 (default: 15)
----@field min_elevation? number Minimum Y coordinate (default: -31000)
----@field max_elevation? number Maximum Y coordinate (default: 31000)
----@field mob_name? string Optional entity technical name override
----@field _parsed_nodes? table<string, boolean> Pre-parsed fast-lookup map of allowed node names
----@field _parsed_groups? table<string, boolean> Pre-parsed fast-lookup map of allowed node group names
----@field _parsed_biomes? table<string, boolean> Pre-parsed fast-lookup map of allowed biome names
----@field _parsed_exclude_nodes? table<string, boolean> Pre-parsed fast-lookup map of excluded node names
----@field _parsed_exclude_groups? table<string, boolean> Pre-parsed fast-lookup map of excluded node group names
-
----@class SpawnDefinition : SpawnConfig
----@field mob_name? string Entity technical name (e.g. "x_mobs:spider")
-
----Callback function invoked when an asynchronous A* path search completes.
----Receives an array of solved 3D waypoint vectors on success, or `nil` if unreachable.
----@alias PathfindingCallback fun(path: Vector[]|nil)
-
----Standard pub-sub event names emitted across mob lifecycles on the x_mob_core event bus.
----@alias CoreEventName "on_mob_spawn"|"on_mob_death"|"on_mob_despawn"
----| "on_mob_hurt"|"on_mob_target"|"on_mob_rightclick"|string
-
----Callback function invoked when a pub-sub event is emitted on the event bus.
----@alias EventListenerCallback fun(...: any)
-
----Pre-combat custom ability interception hook handler.
----Executed at Priority 15 in the middleware pipeline prior to declarative melee and shooter logic.
----Return `true` to halt the pipeline (e.g. while casting spells, summoning minions, in tactical standoff).
----Return `false` or `nil` to fall through into standard declarative melee and ranged attacks.
----@alias CustomStepHandler fun(self: table, dtime: number, moveresult?: table, def?: table): boolean|nil
-
----Step hook callback invoked on every server step for living mob entities.
----
----Return values:
----- Return `true` to **intercept** step handling: cancels subsequent pipeline hooks
----  from firing on this tick, and bypasses default pursuit and wandering locomotion.
----- Return `false` or `nil` to allow subsequent pipeline hooks and normal mob locomotion to proceed.
----@alias StepHookHandler fun(self: table, dtime: number, def: table, moveresult?: table): boolean|nil
+---Lifecycle entity wrapper, state machine, and environmental hazard container.
+---@class MobLifecycleSubsystems
+---@field state_machine StateMachineSubsystem Extensible state machine coordinator
+---@field entity_wrapper EntityWrapperSubsystem Registration wrapper and physics standardization
+---@field environment EnvironmentSubsystem Environmental hazards (lava, drowning, suffocation)
 
 local types = {}
 return types

@@ -14,5 +14,6 @@
     "license": "MIT",
     "repo": "https://github.com/sakel-hub/x_mob_core",
     "issue_tracker": "https://github.com/sakel-hub/x_mob_core/issues",
-    "ai_disclosure": "ASSISTED"
+    "ai_disclosure": "ASSISTED",
+    "website": "https://github.com/sakel-hub/x_mob_core/blob/main/API.md"
 }

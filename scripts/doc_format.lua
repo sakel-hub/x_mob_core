@@ -35,6 +35,35 @@ export.serializeAndExport = function(docs, outputDir)
 	local functions = {}
 	local variables = {}
 
+	local function is_internal_class(name, item)
+		if not name or name == "" or name == "x_mob_core" or name == "LuaLS" then
+			return true
+		end
+		if name:find("Subsystem$") or name:find("^Mob.*Subsystems$") then
+			return true
+		end
+		local internal_names = {
+			FastPathfinder = true,
+			PathCache = true,
+			BinaryHeap = true,
+			MinHeap = true,
+			SpawningRegistry = true,
+			SpawningConditions = true,
+			SpawningEngine = true,
+			StepPipeline = true,
+			StepHook = true,
+		}
+		if internal_names[name] then
+			return true
+		end
+		local def1 = item.defines and item.defines[1]
+		local desc = (def1 and (def1.rawdesc or def1.desc)) or item.desc or ""
+		if desc:find("@internal") or desc:find("@private") or desc:find("@nodoc") then
+			return true
+		end
+		return false
+	end
+
 	for _, item in ipairs(docs) do
 		local name = item.name
 		if not name and item.defines and item.defines[1] then
@@ -53,15 +82,20 @@ export.serializeAndExport = function(docs, outputDir)
 			and not name:find("^x_mob_core%.[^%.]+%.")
 		if is_valid then
 			if item.type == "type" and name ~= "x_mob_core" then
-				if def1 and def1.type == "doc.alias" then
-					table.insert(aliases, item)
-				else
-					table.insert(classes, item)
+				if not is_internal_class(name, item) then
+					if def1 and def1.type == "doc.alias" then
+						table.insert(aliases, item)
+					else
+						table.insert(classes, item)
+					end
 				end
 			elseif def1 and (def1.view == "function"
 				or (def1.extends and def1.extends.type == "function")) then
-				table.insert(functions, item)
-			elseif name ~= "x_mob_core" then
+				-- Only export public x_mob_core API methods
+				if name:find("^x_mob_core%.") and not name:find("^x_mob_core%.[^%.]+%.") then
+					table.insert(functions, item)
+				end
+			elseif name:find("^x_mob_core%.registered_") then
 				table.insert(variables, item)
 			end
 		end
@@ -99,7 +133,7 @@ export.serializeAndExport = function(docs, outputDir)
 				.. "idle and wander routines, raycast player perception, tactical retreat, and velocity damping.",
 			match = function(n)
 				return n:find("step_move") or n:find("step_wander") or n:find("scan")
-					or n:find("retreat") or n:find("steer") or n:find("halt")
+					or n:find("retreat") or n:find("steer") or n:find("halt") or n:find("wall_collision")
 			end
 		},
 		{
@@ -122,6 +156,7 @@ export.serializeAndExport = function(docs, outputDir)
 					or n:find("rally") or n:find("follower") or n:find("orphan")
 					or n:find("leader") or n:find("repulsion") or n:find("successor")
 					or n:find("swarm") or n:find("flock") or n:find("shoal")
+					or n:find("panic") or n:find("aura")
 			end
 		},
 		{
@@ -134,6 +169,20 @@ export.serializeAndExport = function(docs, outputDir)
 					or n:find("detach") or n:find("combat") or n:find("faction")
 					or n:find("allies") or n:find("enemies") or n:find("predict_aim")
 					or n:find("drop_item") or n:find("loot") or n:find("shooter")
+					or n:find("particle") or n:find("health_bar")
+			end
+		},
+		{
+			title = "Status Effects, Envelops & Screen Vignettes API",
+			desc = "Compound player and entity status effects (buffs, debuffs, DoTs, HoTs, roots, haste, slow, thorns), "
+				.. "dynamic physical movement speed / jump / gravity / FOV modifiers, multi-effect stacking, "
+				.. "3D open rectangular sleeve visual envelops, and client-side responsive fullscreen HUD screen vignettes.",
+			match = function(n)
+				return n:find("status_effect") or n:find("buff") or n:find("envelop")
+					or n:find("vignette") or n:find("rooted") or n:find("speed_multiplier")
+					or n:find("attack_multiplier") or n:find("damage_multiplier")
+					or n:find("knockback_resilience") or n:find("thorns") or n:find("cleanse")
+					or n:find("dispel") or n:find("scale_damage_groups")
 			end
 		},
 		{
@@ -160,6 +209,7 @@ export.serializeAndExport = function(docs, outputDir)
 				return n:find("uuid") or n:find("line_of_sight") or n:find("player_alive")
 					or n:find("event") or n:find("listen") or n:find("emit") or n:find("util")
 					or n:find("ground") or n:find("headroom") or n:find("avoid_solid_nodes")
+					or n:find("copy")
 			end
 		}
 	}
@@ -184,11 +234,13 @@ export.serializeAndExport = function(docs, outputDir)
 
 		-- Group 3: Motor & Steering Controller
 		["x_mob_core.retreat_from"] = 3,
+		["x_mob_core.step_tactical_retreat"] = 3,
 		["x_mob_core.scan_for_player"] = 3,
 		["x_mob_core.step_wander_or_idle"] = 3,
 		["x_mob_core.step_move_or_idle"] = 3,
 		["x_mob_core.halt_horizontal_velocity"] = 3,
 		["x_mob_core.set_horizontal_velocity"] = 3,
+		["x_mob_core.has_wall_collision"] = 3,
 		["x_mob_core.is_aquatic_mob"] = 3,
 		["x_mob_core.find_nearest_shore_pos"] = 3,
 
@@ -211,9 +263,13 @@ export.serializeAndExport = function(docs, outputDir)
 		["x_mob_core.relink_follower"] = 5,
 		["x_mob_core.calculate_repulsion"] = 5,
 		["x_mob_core.elect_successor"] = 5,
+		["x_mob_core.apply_pack_buff"] = 5,
+		["x_mob_core.pulse_aura"] = 5,
+		["x_mob_core.trigger_cowardice_panic"] = 5,
 		["x_mob_core.step_swarm"] = 5,
 		["x_mob_core.step_flock"] = 5,
 		["x_mob_core.step_swarm_combat"] = 5,
+		["x_mob_core.step_shoal"] = 5,
 
 		-- Group 6: Combat, Damage, Factions & Loot
 		["x_mob_core.handle_punch"] = 6,
@@ -244,28 +300,66 @@ export.serializeAndExport = function(docs, outputDir)
 		["x_mob_core.show_health_bar"] = 6,
 		["x_mob_core.hide_health_bar"] = 6,
 		["x_mob_core.update_health_bar"] = 6,
+		["x_mob_core.attach_particles"] = 6,
+		["x_mob_core.delete_particles"] = 6,
+		["x_mob_core.clear_target_particles"] = 6,
 
-		-- Group 7: Spawner Engine
-		["x_mob_core.register_spawn"] = 7,
-		["x_mob_core.spawn_mob_group"] = 7,
-		["x_mob_core.spawn_mob"] = 7,
+		-- Group 7: Status Effects, Envelops & Screen Vignettes
+		["x_mob_core.apply_envelop"] = 7,
+		["x_mob_core.remove_envelop"] = 7,
+		["x_mob_core.remove_envelop_effect"] = 7,
+		["x_mob_core.is_enveloped"] = 7,
+		["x_mob_core.has_envelop"] = 7,
+		["x_mob_core.get_envelop_data"] = 7,
+		["x_mob_core.apply_status_effect"] = 7,
+		["x_mob_core.remove_status_effect"] = 7,
+		["x_mob_core.has_status_effect"] = 7,
+		["x_mob_core.is_rooted"] = 7,
+		["x_mob_core.get_status_effects"] = 7,
+		["x_mob_core.clear_status_effects"] = 7,
+		["x_mob_core.register_status_effect_preset"] = 7,
+		["x_mob_core.register_status_preset"] = 7,
+		["x_mob_core.get_status_effect_preset"] = 7,
+		["x_mob_core.apply_buff"] = 7,
+		["x_mob_core.get_speed_multiplier"] = 7,
+		["x_mob_core.get_attack_multiplier"] = 7,
+		["x_mob_core.get_damage_multiplier"] = 7,
+		["x_mob_core.get_knockback_resilience"] = 7,
+		["x_mob_core.get_thorns"] = 7,
+		["x_mob_core.cleanse_debuffs"] = 7,
+		["x_mob_core.dispel_buffs"] = 7,
+		["x_mob_core.scale_damage_groups"] = 7,
+		["x_mob_core.apply_vignette"] = 7,
+		["x_mob_core.remove_vignette"] = 7,
+		["x_mob_core.clear_vignettes"] = 7,
+		["x_mob_core.has_vignette"] = 7,
+		["x_mob_core.register_vignette"] = 7,
+		["x_mob_core.set_default_vignette"] = 7,
+		["x_mob_core.set_vignette_prominence_multiplier"] = 7,
+		["x_mob_core.get_vignette_prominence_multiplier"] = 7,
 
-		-- Group 8: Audio & Sound Subsystem
-		["x_mob_core.play_sound"] = 8,
-		["x_mob_core.stop_sound"] = 8,
+		-- Group 8: Spawner Engine
+		["x_mob_core.register_spawn"] = 8,
+		["x_mob_core.spawn_mob_group"] = 8,
+		["x_mob_core.spawn_mob"] = 8,
 
-		-- Group 9: Core Utilities, Spatial Queries & Event Bus
-		["x_mob_core.generate_uuid"] = 9,
-		["x_mob_core.line_of_sight"] = 9,
-		["x_mob_core.is_player_alive"] = 9,
-		["x_mob_core.get_ground_y"] = 9,
-		["x_mob_core.pick_ground_waypoint"] = 9,
-		["x_mob_core.get_headroom"] = 9,
-		["x_mob_core.avoid_solid_nodes"] = 9,
-		["x_mob_core.find_ground_level"] = 9,
-		["x_mob_core.listen"] = 9,
-		["x_mob_core.unlisten"] = 9,
-		["x_mob_core.emit"] = 9,
+		-- Group 9: Audio & Sound Subsystem
+		["x_mob_core.play_sound"] = 9,
+		["x_mob_core.stop_sound"] = 9,
+
+		-- Group 10: Core Utilities, Spatial Queries & Event Bus
+		["x_mob_core.generate_uuid"] = 10,
+		["x_mob_core.shallow_copy"] = 10,
+		["x_mob_core.line_of_sight"] = 10,
+		["x_mob_core.is_player_alive"] = 10,
+		["x_mob_core.get_ground_y"] = 10,
+		["x_mob_core.pick_ground_waypoint"] = 10,
+		["x_mob_core.get_headroom"] = 10,
+		["x_mob_core.avoid_solid_nodes"] = 10,
+		["x_mob_core.find_ground_level"] = 10,
+		["x_mob_core.listen"] = 10,
+		["x_mob_core.unlisten"] = 10,
+		["x_mob_core.emit"] = 10,
 	}
 
 	-- Table of Contents

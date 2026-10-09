@@ -25,3 +25,6 @@ Asset Attribution
 -------------------------------------------------------------------------------
 All textures and visual assets created specifically for Luanti by SaKeL (MIT License):
 - textures/x_mob_core_vignette.png: Original 512x512 super-ellipse smoothstep alpha screen vignette.
+- textures/x_mob_core_envelop_default.png: Original 16x16 pixel-art fallback texture featuring ethereal celestial energy pillars and top-fading alpha transparency.
+- models/x_mob_core_envelop_box.glb: Original animated 3D sleeve mesh with harmonic radial breathing pulse for status effect envelopment.
+- assets/x_mob_core_envelop_box.blend: Original source Blender file containing rigged mesh, armature hierarchy, and pulse animation.
