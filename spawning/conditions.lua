@@ -112,6 +112,36 @@ function conditions.check(pos, def, is_mapgen)
 	local node_below = core.get_node({x = pos.x, y = pos.y - 1, z = pos.z})
 	local node_at = core.get_node(pos)
 
+	local def_below = core.registered_nodes[node_below.name]
+	local def_at = core.registered_nodes[node_at.name]
+
+	-- Differentiate aquatic vs non-aquatic mob spawn placement
+	local mdef = x_mob_core and x_mob_core.registered_mobs and x_mob_core.registered_mobs[def.mob_name]
+	local is_aquatic = def.is_aquatic or (mdef and (mdef.shoal or mdef.is_aquatic))
+	if not is_aquatic and mdef and x_mob_core.motor and x_mob_core.motor.safety then
+		is_aquatic = x_mob_core.motor.safety.is_aquatic_mob(mdef)
+	end
+
+	if not is_aquatic then
+		-- Non-aquatic mobs cannot spawn submerged in liquid or standing on liquid surfaces
+		if def_at and def_at.liquidtype and def_at.liquidtype ~= "none" then
+			return false
+		end
+		if def_below and def_below.liquidtype and def_below.liquidtype ~= "none" then
+			return false
+		end
+		if def_at and def_at.walkable then
+			return false
+		end
+	else
+		-- Aquatic mobs must spawn in or adjacent to liquid
+		local in_water = (def_at and def_at.liquidtype and def_at.liquidtype ~= "none") or
+			(def_below and def_below.liquidtype and def_below.liquidtype ~= "none")
+		if not in_water then
+			return false
+		end
+	end
+
 	-- Check explicit node exclusions
 	if def._parsed_exclude_nodes and next(def._parsed_exclude_nodes) then
 		if def._parsed_exclude_nodes[node_below.name] or def._parsed_exclude_nodes[node_at.name] then

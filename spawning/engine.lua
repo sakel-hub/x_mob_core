@@ -9,10 +9,30 @@ local engine = {}
 local registry = dofile(core.get_modpath("x_mob_core") .. "/spawning/registry.lua")
 local conditions = dofile(core.get_modpath("x_mob_core") .. "/spawning/conditions.lua")
 
-local SPAWN_INTERVAL = 6.0
+local math_random = math.random
+local math_floor = math.floor
+local math_cos = math.cos
+local math_sin = math.sin
+local math_pi = math.pi
+local math_rad = math.rad
+local math_max = math.max
+local math_min = math.min
+local atan2 = math.atan2 or math.atan
+
+local SPAWN_INTERVAL = 12.0
+local STEP_INTERVAL = 1.0
 local SPAWN_MIN_DIST = 24
 local SPAWN_MAX_DIST = 48
 local CHUNK_SPAWN_CHANCE = 4 -- 1 in 4 chunks attempts wild mob generation
+local CANDIDATE_ATTEMPTS = 4
+local FRONT_BIAS = 0.50
+local FRONT_ARC_DEG = 130.0
+local FRONT_ARC_RAD = math_rad(FRONT_ARC_DEG)
+
+-- Scratch vectors recycled during candidate checks to prevent per-attempt table GC churn
+local scratch_top_pos = {x = 0, y = 0, z = 0}
+local scratch_bot_pos = {x = 0, y = 0, z = 0}
+local scratch_spawn_pos = {x = 0, y = 0, z = 0}
 
 --- Spawns a cohesive group of mobs scattered safely around a center point
 ---@param spawn_pos Vector World center position
@@ -73,7 +93,8 @@ local function spawn_mob_group(spawn_pos, def, source)
 					local n_und = core.get_node(check_under)
 					if n_cur.name == "air" and n_und.name ~= "air" and n_und.name ~= "ignore" then
 						local ndef = core.registered_nodes[n_und.name]
-						if ndef and ndef.walkable and not (def._parsed_exclude_nodes and def._parsed_exclude_nodes[n_und.name]) then
+						if ndef and ndef.walkable and not (ndef.liquidtype and ndef.liquidtype ~= "none")
+							and not (def._parsed_exclude_nodes and def._parsed_exclude_nodes[n_und.name]) then
 							candidate_ground = check_pos
 							break
 						end
@@ -145,42 +166,128 @@ core.register_on_generated(function(minp, maxp, _blockseed)
 	end
 end)
 
+--- Determines player's primary horizontal movement or facing heading angle in radians.
+--- Uses velocity when traveling, falling back to look direction or horizontal yaw.
+---@param player ObjectRef Player object
+---@return number|nil heading_angle Angle in radians (-pi to pi), or nil if indeterminate
+local function get_player_heading(player)
+	if not player or not player:is_valid() then
+		return nil
+	end
+
+	-- 1. Velocity vector if moving horizontally (travel trajectory)
+	local vel = player:get_velocity()
+	if vel then
+		local spd_sq = vel.x * vel.x + vel.z * vel.z
+		if spd_sq > 0.25 then -- speed > 0.5 nodes/s (walking/sprinting/riding)
+			return atan2(vel.z, vel.x)
+		end
+	end
+
+	-- 2. Horizontal look direction vector
+	local dir = player:get_look_dir()
+	if dir then
+		local dir_sq = dir.x * dir.x + dir.z * dir.z
+		if dir_sq > 0.001 then
+			return atan2(dir.z, dir.x)
+		end
+	end
+
+	-- 3. Horizontal yaw fallback (handles looking straight up/down)
+	local yaw = player:get_look_horizontal()
+	if yaw then
+		local fwd = core.yaw_to_dir(yaw)
+		if fwd then
+			return atan2(fwd.z, fwd.x)
+		end
+	end
+
+	return nil
+end
+
+--- Computes a candidate spawn angle around the player, biased towards their path of travel.
+---@param player ObjectRef Player object
+---@param front_bias? number Probability (0.0 to 1.0) of choosing a forward cone angle
+---@param front_arc_rad? number Total width of forward cone in radians
+---@return number angle Angle in radians (0 to 2*pi)
+local function sample_spawn_angle(player, front_bias, front_arc_rad)
+	local bias = front_bias or FRONT_BIAS
+	local arc = front_arc_rad or FRONT_ARC_RAD
+
+	local heading = (bias > 0) and get_player_heading(player)
+	if heading and math_random() < bias then
+		local half_arc = arc * 0.5
+		local offset = (math_random() * 2 - 1) * half_arc
+		local angle = heading + offset
+		return (angle % (math_pi * 2))
+	end
+
+	return math_random() * math_pi * 2
+end
+
 -- =========================================================================
 -- PASS 2: PLAYER-CENTRIC TRICKLE SPAWNER
--- Responsive globalstep repopulating active player areas during exploration
+-- Responsive time-sliced globalstep repopulating active player areas during exploration
+-- Distributes player checks across 1.0s ticks to eliminate multiplayer lag spikes
 -- =========================================================================
-local timer = 0.0
+local step_timer = 0.0
+local player_cursor = 1
+local player_quota = 0.0
+
 core.register_globalstep(function(dtime)
-	timer = timer + dtime
-	if timer < SPAWN_INTERVAL then return end
-	timer = 0.0
+	step_timer = step_timer + dtime
+	if step_timer < STEP_INTERVAL then return end
+	step_timer = 0.0
 
 	local players = core.get_connected_players()
-	if #players == 0 then return end
+	local num_players = #players
+	if num_players == 0 then
+		player_quota = 0.0
+		return
+	end
 
 	local spawns = registry.get_spawns()
-	if #spawns == 0 then return end
+	local num_spawns = #spawns
+	if num_spawns == 0 then return end
 
-	for p = 1, #players do
-		local player = players[p]
+	-- Time-sliced batch sizing: evenly spread player workload over SPAWN_INTERVAL seconds
+	local slices = math_max(1, math_floor(SPAWN_INTERVAL / STEP_INTERVAL + 0.5))
+	player_quota = math_min(num_players, player_quota + (num_players / slices))
+	local players_to_process = math_floor(player_quota + 1e-9)
+	if players_to_process <= 0 then return end
+	player_quota = player_quota - players_to_process
+
+	for _ = 1, players_to_process do
+		if player_cursor > num_players then
+			player_cursor = 1
+		end
+		local player = players[player_cursor]
+		player_cursor = player_cursor + 1
+
 		local p_pos = player and player:is_valid() and player:get_pos()
 		if p_pos then
-			-- Try up to 3 candidate directions to find suitable terrain around player
-			for _ = 1, 3 do
-				local angle = math.random() * math.pi * 2
-				local dist = math.random(SPAWN_MIN_DIST, SPAWN_MAX_DIST)
-				local tx = math.floor(p_pos.x + math.cos(angle) * dist + 0.5)
-				local tz = math.floor(p_pos.z + math.sin(angle) * dist + 0.5)
+			-- Try up to CANDIDATE_ATTEMPTS candidate directions to find suitable terrain
+			for _ = 1, CANDIDATE_ATTEMPTS do
+				local angle = sample_spawn_angle(player, FRONT_BIAS, FRONT_ARC_RAD)
+				local dist = math_random(SPAWN_MIN_DIST, SPAWN_MAX_DIST)
+				local tx = math_floor(p_pos.x + math_cos(angle) * dist + 0.5)
+				local tz = math_floor(p_pos.z + math_sin(angle) * dist + 0.5)
 
-				local min_y = math.max(-31000, math.floor(p_pos.y - 15 + 0.5))
-				local max_y = math.min(31000, math.floor(p_pos.y + 15 + 0.5))
+				local min_y = math_max(-31000, math_floor(p_pos.y - 15 + 0.5))
+				local max_y = math_min(31000, math_floor(p_pos.y + 15 + 0.5))
 
-				local top_pos = {x = tx, y = max_y, z = tz}
-				local bot_pos = {x = tx, y = min_y, z = tz}
-				local node_top = core.get_node_or_nil(top_pos)
+				scratch_top_pos.x = tx
+				scratch_top_pos.y = max_y
+				scratch_top_pos.z = tz
+
+				scratch_bot_pos.x = tx
+				scratch_bot_pos.y = min_y
+				scratch_bot_pos.z = tz
+
+				local node_top = core.get_node_or_nil(scratch_top_pos)
 				if node_top then
 					local ground_y = nil
-					local ray = Raycast(top_pos, bot_pos, false, false)
+					local ray = Raycast(scratch_top_pos, scratch_bot_pos, false, true)
 					for pt in ray do
 						if pt.type == "node" then
 							local n = core.get_node(pt.under)
@@ -192,14 +299,21 @@ core.register_globalstep(function(dtime)
 					end
 
 					if ground_y then
-						local spawn_pos = {x = tx, y = ground_y + 1, z = tz}
-						local def = spawns[math.random(1, #spawns)]
-						-- Calibrated probability scaling: P(attempt) = 75 / def.chance
-						local scaled_chance = math.max(1, math.floor((def.chance or 1000) / 75))
+						scratch_spawn_pos.x = tx
+						scratch_spawn_pos.y = ground_y + 1
+						scratch_spawn_pos.z = tz
 
-						if math.random(1, scaled_chance) == 1 then
-							if conditions.check(spawn_pos, def, false) then
-								spawn_mob_group(spawn_pos, def, "Trickle Spawning")
+						local def = spawns[math_random(1, num_spawns)]
+						-- Calibrated probability scaling: P(attempt) = 75 / def.chance
+						local scaled_chance = math_max(1, math_floor((def.chance or 1000) / 75))
+
+						if math_random(1, scaled_chance) == 1 then
+							if conditions.check(scratch_spawn_pos, def, false) then
+								spawn_mob_group({
+									x = scratch_spawn_pos.x,
+									y = scratch_spawn_pos.y,
+									z = scratch_spawn_pos.z,
+								}, def, "Trickle Spawning")
 								break -- Succeeded for this player this cycle
 							end
 						end
@@ -213,4 +327,6 @@ end)
 engine.registry = registry
 engine.conditions = conditions
 engine.spawn_mob_group = spawn_mob_group
+engine.get_player_heading = get_player_heading
+engine.sample_spawn_angle = sample_spawn_angle
 return engine
