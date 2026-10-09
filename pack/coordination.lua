@@ -404,4 +404,111 @@ function coordination.calculate_repulsion(self, pos, radius, strength, ignore_be
 	return sep_x, sep_y, sep_z
 end
 
+--- Applies a status effect or buff preset to all active living followers in a leader's pack
+---@param leader_self table Leader mob entity instance
+---@param buff_def string|StatusEffectDef Buff preset identifier or status effect definition table
+---@param options? { include_leader?: boolean, max_targets?: integer, sound?: string, vfx?: string|fun(pos: Vector) }
+---@return integer count Number of pack entities successfully buffed
+function coordination.apply_pack_buff(leader_self, buff_def, options)
+	if not leader_self or not leader_self.object or not leader_self.object:is_valid() then return 0 end
+	local opts = options or {}
+	local count = 0
+
+	if opts.include_leader then
+		if x_mob_core.apply_buff(leader_self.object, buff_def) then
+			count = count + 1
+		end
+	end
+
+	local followers = leader_self.pack_followers or leader_self.followers
+	if followers and #followers > 0 then
+		local max_followers = opts.max_targets and (opts.max_targets - count) or #followers
+		local fol_count = 0
+		for i = 1, #followers do
+			if fol_count >= max_followers then break end
+			local obj = followers[i]
+			if utils.is_player_alive(obj) then
+				if x_mob_core.apply_buff(obj, buff_def) then
+					count = count + 1
+					fol_count = fol_count + 1
+				end
+			end
+		end
+	end
+
+	local pos = leader_self.object:get_pos()
+	if pos then
+		if opts.sound then
+			core.sound_play(opts.sound, {
+				pos = pos,
+				gain = 1.0,
+				max_hear_distance = 24.0,
+			}, true)
+		end
+		if type(opts.vfx) == "function" then
+			opts.vfx(pos)
+		end
+	end
+
+	return count
+end
+
+--- Pulses a radius aura applying a positive or neutral effect to allies or pack followers
+---@param caster_self table Caster mob entity instance
+---@param aura_def AuraPulseDef Aura specification table
+---@return integer count Number of entities affected
+function coordination.pulse_aura(caster_self, aura_def)
+
+	if not caster_self or not caster_self.object or not caster_self.object:is_valid() or not aura_def then
+		return 0
+	end
+	local pos = caster_self.object:get_pos()
+	if not pos then return 0 end
+
+	local target_mode = aura_def.target or "pack_followers"
+	local effect = aura_def.effect or aura_def.id
+	local count = 0
+
+	if target_mode == "self" then
+		if x_mob_core.apply_buff(caster_self.object, effect) then
+			count = count + 1
+		end
+	elseif target_mode == "pack_followers" then
+		count = coordination.apply_pack_buff(caster_self, effect, {
+			include_leader = false,
+			max_targets = aura_def.max_targets,
+		})
+	elseif target_mode == "allies" then
+		local rad = aura_def.radius or 16.0
+		local max_t = aura_def.max_targets or 8
+		local objs = core.get_objects_inside_radius(pos, rad)
+		for i = 1, #objs do
+			if count >= max_t then break end
+			local obj = objs[i]
+			if utils.is_player_alive(obj) then
+				local ent = obj:get_luaentity()
+				if ent and x_mob_core.are_allies(caster_self, ent) then
+					if x_mob_core.apply_buff(obj, effect) then
+						count = count + 1
+					end
+				end
+			end
+		end
+	end
+
+	if aura_def.sound then
+		core.sound_play(aura_def.sound, {
+			pos = pos,
+			gain = 1.0,
+			max_hear_distance = 24.0,
+		}, true)
+	end
+	if type(aura_def.vfx) == "function" then
+		aura_def.vfx(pos)
+	end
+
+	return count
+end
+
 return coordination
+

@@ -36,31 +36,39 @@ end
 ---@return number multiplier (1.0 for players, mob-defined knockback_mult, or 1.0 default)
 function knockback.get_multiplier(obj)
 	if not obj then return 1.0 end
+	local base_mult = 1.0
+	local target_obj = nil
 	if type(obj) == "table" then
 		if obj.knockback_mult ~= nil then
-			return obj.knockback_mult
+			base_mult = obj.knockback_mult
 		end
 		if obj.object and type(obj.object) == "userdata" and obj.object.is_valid and obj.object:is_valid() then
-			obj = obj.object
+			target_obj = obj.object
 		else
-			return 1.0
+			return base_mult
 		end
-	end
-	if type(obj) == "userdata" then
-		if obj.is_player and obj:is_player() then
-			return 1.0
-		end
-		local ent = obj.get_luaentity and obj:get_luaentity()
-		if ent then
-			if ent.knockback_mult ~= nil then
-				return ent.knockback_mult
-			end
-			if ent._def and ent._def.knockback_mult ~= nil then
-				return ent._def.knockback_mult
+	elseif type(obj) == "userdata" then
+		target_obj = obj
+		if not (obj.is_player and obj:is_player()) then
+			local ent = obj.get_luaentity and obj:get_luaentity()
+			if ent then
+				if ent.knockback_mult ~= nil then
+					base_mult = ent.knockback_mult
+				elseif ent._def and ent._def.knockback_mult ~= nil then
+					base_mult = ent._def.knockback_mult
+				end
 			end
 		end
 	end
-	return 1.0
+
+	if target_obj and target_obj:is_valid() then
+		local res = x_mob_core.get_knockback_resilience(target_obj)
+		if res and res > 0 then
+			base_mult = base_mult * math.max(0.0, 1.0 - res)
+		end
+	end
+
+	return base_mult
 end
 
 return knockback

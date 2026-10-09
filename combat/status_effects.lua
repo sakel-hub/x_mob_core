@@ -8,40 +8,6 @@
 	License: MIT
 ]]
 
----@class StatusEffectDef
----@field type? "slow"|"root"|"dot"|"debuff"|"custom" Effect archetype ("root" halts movement and jump)
----@field chance? number Optional success chance (fraction 0.0-1.0 or percentage 1-100; defaults to 100% when nil)
----@field duration number Duration in seconds
----@field speed_factor? number Movement speed fractional multiplier (e.g. 0.5 for 50% slow)
----@field jump_factor? number Jump fractional multiplier (e.g. 0.0 to prevent jump)
----@field gravity_factor? number Gravity fractional multiplier
----@field fov_factor? number Camera FOV multiplier (e.g. 0.85 for shockwave / tunnel vision)
----@field fov_duration? number Optional sub-duration for FOV effect in seconds (defaults to effect duration)
----@field fov_transition? number FOV transition smoothing time in seconds (default 0.2)
----@field damage? number Damage per interval tick for DoT
----@field interval? number Interval between DoT ticks in seconds (default 1.0)
----@field damage_type? string Damage group name for DoT (default "fleshy")
----@field caster? ObjectRef Attacking entity or player source
----@field penetrate_armor? boolean Whether DoT bypasses armor damage reduction (default true)
----@field particle_spawner? table|fun(target: ObjectRef):table Particle spawner definition for DoT ticks
----@field envelop? table<{ texture: string }> Visual envelop configuration
----@field envelop_texture? string Visual envelop sleeve texture asset
----@field hud_vignette? string|table Fullscreen responsive screen vignette configuration
----@field cleanse_in_water? boolean Whether immersion in water immediately cleanses the effect
----@field drain_hunger? number Hunger or stamina units drained per tick via hunger_adapter
----@field anti_heal? boolean Whether health regeneration is suppressed during effect
----@field damage_multiplier? number Incoming damage multiplier while afflicted (e.g. 1.35 for brittle)
----@field on_apply? fun(target: ObjectRef) Callback when effect is first applied
----@field on_step? fun(dtime: number, target: ObjectRef) Callback on step tick (forwarded to envelop)
----@field on_tick? fun(target: ObjectRef) Callback on periodic DoT tick (e.g. particle spawner)
----@field on_remove? fun(target: ObjectRef) Callback when effect is removed or expires
-
----@class ActiveEffectRecord : StatusEffectDef
----@field timer number Remaining duration in seconds
----@field token string|integer Cancellation and refresh token
----@field has_envelop boolean Whether an envelop entity was attached
----@field target ObjectRef Target entity or player
-
 ---@class StatusEffectsSubsystem
 local status_effects = {}
 
@@ -520,23 +486,91 @@ local function remove_fov_modifier(player, effect_id, transition_time)
 end
 
 -- ============================================================================
--- 3. STATUS EFFECT CORE API
+-- 3. STATUS EFFECT CORE API & PRESET REGISTRY
 -- ============================================================================
 
+--- Registry of standard positive and negative status effect presets
+---@type table<string, StatusEffectDef>
+local effect_presets = {}
+
+--- Registers or overrides a reusable status effect preset
+---@param name string Preset identifier (e.g. "frenzy", "ironhide")
+---@param def StatusEffectDef Preset configuration table
+function status_effects.register_preset(name, def)
+	if not name or not def then return end
+	if effect_presets[name] then
+		for k, v in pairs(def) do
+			effect_presets[name][k] = v
+		end
+	else
+		effect_presets[name] = utils.shallow_copy(def)
+	end
+	effect_presets[name].id = effect_presets[name].id or name
+end
+
+--- Retrieves a registered status effect preset by name
+---@param name string Preset identifier
+---@return StatusEffectDef? def Copy of the preset definition
+function status_effects.get_preset(name)
+	if not name or not effect_presets[name] then return nil end
+	return utils.shallow_copy(effect_presets[name])
+end
+
 --- Normalizes status effect parameters based on archetype defaults
----@param def StatusEffectDef Input effect definition
+---@param def StatusEffectDef|string Input effect definition or preset name
 ---@return StatusEffectDef normalized Clean normalized definition
 local function normalize_effect_def(def)
+	if type(def) == "string" then
+		local preset = effect_presets[def]
+		if preset then
+			def = utils.shallow_copy(preset)
+		else
+			def = { id = def, type = "custom" }
+		end
+	elseif type(def) == "table" and def.preset and effect_presets[def.preset] then
+		local merged = utils.shallow_copy(effect_presets[def.preset])
+		for k, v in pairs(def) do
+			if k ~= "preset" then
+				merged[k] = v
+			end
+		end
+		def = merged
+	end
+
 	local envelop_texture = def.envelop_texture
 	if not envelop_texture and type(def.envelop) == "table" then
 		envelop_texture = def.envelop.texture
 	end
+	-- Default general envelop texture fallback when envelop is requested without a specific texture
+	if not envelop_texture and (def.envelop == true or (type(def.envelop) == "table" and not def.envelop.texture)) then
+		envelop_texture = "x_mob_core_envelop_default.png"
+	elseif envelop_texture == "default" then
+		envelop_texture = "x_mob_core_envelop_default.png"
+	end
 
 	local effect_type = def.type or "custom"
 	local particles_def = def.particles or def.particle_spawner
+
+	local category = def.category
+	if not category then
+		if effect_type == "buff" then
+			category = "buff"
+		elseif def.heal and def.heal > 0 then
+			category = "buff"
+		elseif (def.attack_multiplier and def.attack_multiplier > 1.0) or
+		       (def.speed_factor and def.speed_factor > 1.0) or
+		       (def.knockback_resilience and def.knockback_resilience > 0) or
+		       (def.damage_multiplier and def.damage_multiplier < 1.0) then
+			category = "buff"
+		else
+			category = "debuff"
+		end
+	end
+
 	local norm = {
 		id = def.id or def.name,
 		type = effect_type,
+		category = category,
 		chance = def.chance,
 		duration = def.duration or 3.0,
 		speed_factor = def.speed_factor,
@@ -546,6 +580,11 @@ local function normalize_effect_def(def)
 		fov_duration = def.fov_duration,
 		fov_transition = def.fov_transition or 0.2,
 		damage = def.damage,
+		heal = def.heal,
+		attack_multiplier = def.attack_multiplier,
+		knockback_resilience = def.knockback_resilience,
+		cleanse_debuffs = def.cleanse_debuffs,
+		thorns = def.thorns,
 		interval = def.interval,
 		damage_type = def.damage_type,
 		caster = def.caster,
@@ -578,15 +617,20 @@ local function normalize_effect_def(def)
 		if norm.drain_hunger and norm.interval == nil then
 			norm.interval = 1.0
 		end
+	elseif norm.type == "buff" then
+		if norm.heal and norm.interval == nil then
+			norm.interval = 1.0
+		end
 	end
 
 	-- Ensure any effect providing periodic actions defaults to 1.0s interval
-	if (norm.drain_hunger or norm.on_tick or norm.on_tick_particles) and norm.interval == nil then
+	if (norm.heal or norm.drain_hunger or norm.on_tick or norm.on_tick_particles) and norm.interval == nil then
 		norm.interval = 1.0
 	end
 
 	return norm
 end
+
 
 
 --- Schedules a recursive DoT ticker for an active DoT status effect
@@ -600,6 +644,7 @@ end
 ---@param penetrate_armor? boolean Armor bypass
 ---@param on_tick? fun(target: ObjectRef) Periodic callback
 ---@param particle_spawner? table|fun(target: ObjectRef):table Particle spawner
+---@param heal? number Health restored per tick for HoT
 local function schedule_dot_tick(
 	target,
 	effect_id,
@@ -610,7 +655,8 @@ local function schedule_dot_tick(
 	caster,
 	penetrate_armor,
 	on_tick,
-	particle_spawner
+	particle_spawner,
+	heal
 )
 	core.after(interval, function()
 		if not target or not target:is_valid() then return end
@@ -675,6 +721,18 @@ local function schedule_dot_tick(
 			end
 		end
 
+		-- Restore health on tick if configured (HoT)
+		if heal and heal > 0 and target:is_valid() then
+			local cur_hp = target.get_hp and target:get_hp() or 0
+			local props = target.get_properties and target:get_properties() or {}
+			local max_hp = props.hp_max or 20
+			if cur_hp > 0 and cur_hp < max_hp then
+				local new_hp = math.min(max_hp, cur_hp + heal)
+				target:set_hp(new_hp)
+				x_mob_core.effects.indicate_regen(target)
+			end
+		end
+
 		-- Deal DoT damage if configured
 		if damage and damage > 0 then
 			local punch_source = (caster and caster:is_valid()) and caster or target
@@ -723,7 +781,8 @@ local function schedule_dot_tick(
 				caster,
 				penetrate_armor,
 				on_tick,
-				particle_spawner
+				particle_spawner,
+				heal
 			)
 		elseif remaining > 0.001 then
 			core.after(remaining, function()
@@ -765,6 +824,11 @@ function status_effects.apply_effect(target, effect_def)
 		active_effects[key] = {}
 	end
 
+	-- Purge negative debuffs if cleanse_debuffs requested
+	if norm.cleanse_debuffs then
+		status_effects.cleanse_debuffs(target)
+	end
+
 	local token = x_mob_core.generate_uuid()
 	local is_player = target:is_player()
 
@@ -803,6 +867,7 @@ function status_effects.apply_effect(target, effect_def)
 	local record = {
 		id = norm.id,
 		type = norm.type,
+		category = norm.category,
 		duration = norm.duration,
 		timer = norm.duration,
 		token = token,
@@ -813,6 +878,11 @@ function status_effects.apply_effect(target, effect_def)
 		fov_duration = norm.fov_duration,
 		fov_transition = norm.fov_transition,
 		damage = norm.damage,
+		heal = norm.heal,
+		attack_multiplier = norm.attack_multiplier,
+		knockback_resilience = norm.knockback_resilience,
+		cleanse_debuffs = norm.cleanse_debuffs,
+		thorns = norm.thorns,
 		interval = norm.interval,
 		damage_type = norm.damage_type,
 		caster = norm.caster,
@@ -920,9 +990,10 @@ function status_effects.apply_effect(target, effect_def)
 		norm.on_apply(target)
 	end
 
-	-- Schedule periodic ticker if applicable (DoT damage, hunger/stamina drain, on_tick callback)
+	-- Schedule periodic ticker if applicable (DoT damage, HoT heal, hunger/stamina drain, on_tick callback)
 	local has_ticker = (norm.interval and norm.interval > 0) and
 		((norm.damage and norm.damage > 0) or
+		 (norm.heal and norm.heal > 0) or
 		 (norm.drain_hunger and norm.drain_hunger > 0) or
 		 norm.on_tick ~= nil or
 		 norm.on_tick_particles ~= nil)
@@ -953,7 +1024,8 @@ function status_effects.apply_effect(target, effect_def)
 			norm.caster,
 			norm.penetrate_armor,
 			norm.on_tick,
-			norm.on_tick_particles
+			norm.on_tick_particles,
+			norm.heal
 		)
 	end
 
@@ -1068,6 +1140,111 @@ function status_effects.get_damage_multiplier(target)
 	return mult
 end
 
+--- Retrieves compound attack multiplier across all active status effects for a target
+---@param target ObjectRef Target player or entity
+---@return number multiplier Net attack multiplier (defaults to 1.0)
+function status_effects.get_attack_multiplier(target)
+	if not target then return 1.0 end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return 1.0 end
+	local mult = 1.0
+	for _, rec in pairs(active_effects[key]) do
+		if rec.attack_multiplier and rec.attack_multiplier > 0 then
+			mult = mult * rec.attack_multiplier
+		end
+	end
+	return mult
+end
+
+--- Retrieves compound movement speed multiplier across all active status effects for a target
+---@param target ObjectRef Target player or entity
+---@return number multiplier Net speed multiplier (defaults to 1.0)
+function status_effects.get_speed_multiplier(target)
+	if not target then return 1.0 end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return 1.0 end
+	local mult = 1.0
+	for _, rec in pairs(active_effects[key]) do
+		if rec.speed_factor and rec.speed_factor > 0 then
+			mult = mult * rec.speed_factor
+		end
+	end
+	return mult
+end
+
+--- Retrieves compound knockback resilience across all active status effects for a target
+---@param target ObjectRef Target player or entity
+---@return number resilience Factor from 0.0 (no reduction) to 1.0 (complete immunity)
+function status_effects.get_knockback_resilience(target)
+	if not target then return 0.0 end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return 0.0 end
+	local max_res = 0.0
+	for _, rec in pairs(active_effects[key]) do
+		if rec.knockback_resilience and rec.knockback_resilience > max_res then
+			max_res = math.min(1.0, rec.knockback_resilience)
+		end
+	end
+	return max_res
+end
+
+--- Cleanses all active negative debuffs, slows, roots, and DoTs from target
+---@param target ObjectRef Target player or entity
+---@return integer count Number of cleansed debuffs
+function status_effects.cleanse_debuffs(target)
+	if not target then return 0 end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return 0 end
+	local to_remove = {}
+	for id, rec in pairs(active_effects[key]) do
+		local is_debuff = (rec.category == "debuff") or
+			(rec.type == "slow" or rec.type == "root" or rec.type == "dot" or rec.type == "debuff")
+		if is_debuff then
+			table.insert(to_remove, id)
+		end
+	end
+
+
+	for _, id in ipairs(to_remove) do
+		status_effects.remove_effect(target, id)
+	end
+	return #to_remove
+end
+
+--- Dispels all active positive buffs from target
+---@param target ObjectRef Target player or entity
+---@return integer count Number of dispelled buffs
+function status_effects.dispel_buffs(target)
+	if not target then return 0 end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return 0 end
+	local to_remove = {}
+	for id, rec in pairs(active_effects[key]) do
+		if rec.category == "buff" or rec.type == "buff" then
+			table.insert(to_remove, id)
+		end
+	end
+	for _, id in ipairs(to_remove) do
+		status_effects.remove_effect(target, id)
+	end
+	return #to_remove
+end
+
+--- Retrieves active thorns configuration on target if any
+---@param target ObjectRef Target player or entity
+---@return table? thorns Thorns definition { damage: number, damage_type?: string, chance?: number }
+function status_effects.get_thorns(target)
+	if not target then return nil end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return nil end
+	for _, rec in pairs(active_effects[key]) do
+		if rec.thorns and type(rec.thorns) == "table" and (rec.thorns.damage or 0) > 0 then
+			return rec.thorns
+		end
+	end
+	return nil
+end
+
 --- Clears all active status effects and restores clean physics on target
 ---@param target ObjectRef Target player or entity
 function status_effects.clear_effects(target)
@@ -1176,7 +1353,36 @@ core.register_on_punchplayer(function(player, hitter, _time_from_last_punch, _to
 			end
 		end
 	end
+
+	-- Check reactive thorns on punched player
+	local thorns = status_effects.get_thorns(player)
+	if thorns and hitter and hitter:is_valid() then
+		local chance = thorns.chance or 1.0
+		if chance >= 1.0 or math.random() <= chance then
+			local tdmg = thorns.damage or 1
+			local dtype = thorns.damage_type or "fleshy"
+			hitter:punch(player, 1.0, {
+				full_punch_interval = 1.0,
+				damage_groups = { [dtype] = tdmg },
+			}, { x = 0, y = 0, z = 0 })
+		end
+	end
 end)
+
+-- Mitigate incoming player damage when buffed with defensive multipliers (e.g. ironhide / carapace < 1.0)
+core.register_on_player_hpchange(function(player, hp_change, _reason)
+	if not player or not player:is_player() or hp_change >= 0 then
+		return hp_change
+	end
+	local mult = status_effects.get_damage_multiplier(player)
+	if mult and mult > 0 and mult < 1.0 then
+		local reduced = math.floor(hp_change * mult)
+		if reduced == 0 then reduced = -1 end
+		return reduced
+	end
+	return hp_change
+end, true)
+
 
 
 core.register_on_joinplayer(function(player)
@@ -1238,12 +1444,111 @@ end
 core.register_on_mods_loaded(register_root_locomotion_evaluator)
 
 -- ============================================================================
--- 5. PUBLIC API EXPORTS
+-- 5. STANDARD BUFF & STATUS PRESETS
+-- ============================================================================
+
+status_effects.register_preset("frenzy", {
+	type = "buff",
+	category = "buff",
+	duration = 8.0,
+	attack_multiplier = 1.35,
+	speed_factor = 1.25,
+	damage_multiplier = 1.15,
+	envelop = true,
+})
+
+status_effects.register_preset("bloodlust", {
+	type = "buff",
+	category = "buff",
+	duration = 6.0,
+	attack_multiplier = 1.25,
+	speed_factor = 1.20,
+	envelop = true,
+})
+
+status_effects.register_preset("ironhide", {
+	type = "buff",
+	category = "buff",
+	duration = 8.0,
+	damage_multiplier = 0.60,
+	knockback_resilience = 0.50,
+	speed_factor = 0.85,
+	envelop = true,
+})
+
+status_effects.register_preset("carapace", {
+	type = "buff",
+	category = "buff",
+	duration = 10.0,
+	damage_multiplier = 0.70,
+	knockback_resilience = 0.75,
+	thorns = { damage = 3, chance = 1.0 },
+	speed_factor = 0.80,
+	envelop = true,
+})
+
+status_effects.register_preset("haste", {
+	type = "buff",
+	category = "buff",
+	duration = 6.0,
+	speed_factor = 1.40,
+	jump_factor = 1.15,
+	envelop = true,
+})
+
+status_effects.register_preset("rejuvenation", {
+	type = "buff",
+	category = "buff",
+	duration = 6.0,
+	heal = 2,
+	interval = 1.0,
+	envelop = true,
+})
+
+status_effects.register_preset("solar_surge", {
+	type = "buff",
+	category = "buff",
+	duration = 10.0,
+	attack_multiplier = 1.30,
+	damage_multiplier = 0.85,
+	envelop = true,
+})
+
+status_effects.register_preset("unstoppable", {
+	type = "buff",
+	category = "buff",
+	duration = 5.0,
+	knockback_resilience = 1.0,
+	speed_factor = 1.10,
+	cleanse_debuffs = true,
+	envelop = true,
+})
+
+status_effects.register_preset("barrier", {
+	type = "buff",
+	category = "buff",
+	duration = 6.0,
+	damage_multiplier = 0.65,
+	knockback_resilience = 0.80,
+	envelop = true,
+})
+
+status_effects.register_preset("shadow_march", {
+	type = "buff",
+	category = "buff",
+	duration = 8.0,
+	attack_multiplier = 1.25,
+	speed_factor = 1.20,
+	envelop = true,
+})
+
+-- ============================================================================
+-- 6. PUBLIC API EXPORTS
 -- ============================================================================
 
 ---Applies or refreshes a status effect on target (player or mob entity).
 ---@param target ObjectRef Target player or entity
----@param effect_def StatusEffectDef Status effect definition table
+---@param effect_def StatusEffectDef|string Status effect definition table or preset name
 ---@return ObjectRef|boolean result Envelop object if envelop attached, or true on success
 function x_mob_core.apply_status_effect(target, effect_def)
 	return status_effects.apply_effect(target, effect_def)
@@ -1292,4 +1597,71 @@ function x_mob_core.get_damage_multiplier(target)
 	return status_effects.get_damage_multiplier(target)
 end
 
+---Retrieves compound outgoing attack multiplier across all active status effects on target.
+---@param target ObjectRef Target player or entity
+---@return number multiplier Compound attack multiplier (default 1.0)
+function x_mob_core.get_attack_multiplier(target)
+	return status_effects.get_attack_multiplier(target)
+end
+
+---Retrieves compound movement speed multiplier across all active status effects on target.
+---@param target ObjectRef Target player or entity
+---@return number multiplier Compound speed multiplier (default 1.0)
+function x_mob_core.get_speed_multiplier(target)
+	return status_effects.get_speed_multiplier(target)
+end
+
+x_mob_core.get_knockback_resilience = status_effects.get_knockback_resilience
+x_mob_core.cleanse_debuffs = status_effects.cleanse_debuffs
+x_mob_core.dispel_buffs = status_effects.dispel_buffs
+
+---Applies a positive buff to target using a registered preset or definition table.
+---@param target ObjectRef Target player or entity
+---@param preset_or_def string|StatusEffectDef Preset name or status effect table
+---@param custom_options? table Optional property overrides
+---@return ObjectRef|boolean result
+function status_effects.apply_buff(target, preset_or_def, custom_options)
+	local def
+	if type(preset_or_def) == "string" then
+		def = status_effects.get_preset(preset_or_def) or { id = preset_or_def, type = "buff" }
+	else
+		def = utils.shallow_copy(preset_or_def)
+	end
+	if custom_options then
+		for k, v in pairs(custom_options) do
+			def[k] = v
+		end
+	end
+	def.type = def.type or "buff"
+	def.category = def.category or "buff"
+	return status_effects.apply_effect(target, def)
+end
+x_mob_core.apply_buff = status_effects.apply_buff
+
+---Registers a reusable status effect preset.
+---@param name string Preset identifier
+---@param def StatusEffectDef Preset configuration table
+function status_effects.register_status_effect_preset(name, def)
+	return status_effects.register_preset(name, def)
+end
+x_mob_core.register_status_effect_preset = status_effects.register_status_effect_preset
+x_mob_core.register_status_preset = status_effects.register_preset
+x_mob_core.status_effects = status_effects
+x_mob_core.get_thorns = status_effects.get_thorns
+
+---Scales damage groups by an outgoing damage multiplier.
+---@param groups table<string, number> Damage groups map
+---@param mult number Damage multiplier
+---@return table<string, number> scaled Scaled damage groups
+function status_effects.scale_damage_groups(groups, mult)
+	if not groups or not mult or mult == 1.0 then return groups end
+	local scaled = {}
+	for k, v in pairs(groups) do
+		scaled[k] = math.max(1, math.floor(v * mult + 0.5))
+	end
+	return scaled
+end
+x_mob_core.scale_damage_groups = status_effects.scale_damage_groups
+
 return status_effects
+

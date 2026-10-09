@@ -1,3 +1,5 @@
+---Declarative Ranged Combat & Projectile Subsystem.
+---@class ShooterSubsystem
 local shooter = {}
 
 local modpath = core.get_modpath("x_mob_core") or "."
@@ -428,7 +430,8 @@ function shooter.step(self, dtime, def)
 								local p_ent = p_obj:get_luaentity()
 								if p_ent then
 									p_ent._shooter = self.object
-									p_ent._damage = cfg.damage or 3
+									local atk_mult = self.object and x_mob_core.get_attack_multiplier(self.object) or 1.0
+									p_ent._damage = math.max(1, math.floor(((cfg.damage or 3) * atk_mult) + 0.5))
 								end
 								if cfg.on_shoot then
 									cfg.on_shoot(self, p_obj, dir, origin)

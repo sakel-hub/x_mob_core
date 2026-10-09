@@ -58,6 +58,76 @@ pipeline.register_step_hook("custom_step", 15, function(self, dtime, def, movere
 	return false
 end)
 
+-- Priority 16: Declarative Buffs, Auras, and Thresholds Hook
+pipeline.register_step_hook("declarative_buffs", 16, function(self, dtime, def)
+	if not def.buffs or self.is_dead or self.state == "flinching" then
+		return false
+	end
+
+	-- Cooldown ticking for reactive triggers
+	if self._buff_trigger_cooldowns then
+		for tid, cd in pairs(self._buff_trigger_cooldowns) do
+			if cd > 0 then
+				self._buff_trigger_cooldowns[tid] = cd - dtime
+			end
+		end
+	end
+
+	-- 1. Periodic Auras
+	local auras = def.buffs.auras
+	if auras and #auras > 0 then
+		self._aura_timers = self._aura_timers or {}
+		for i = 1, #auras do
+			local aura = auras[i]
+			local aid = aura.id or tostring(i)
+			self._aura_timers[aid] = (self._aura_timers[aid] or 0) + dtime
+			local interval = aura.interval or 5.0
+			if self._aura_timers[aid] >= interval then
+				self._aura_timers[aid] = 0
+				coordination.pulse_aura(self, aura)
+			end
+		end
+	end
+
+	-- 2. HP Thresholds
+	local thresholds = def.buffs.thresholds
+	if thresholds and #thresholds > 0 and self.object and self.object:is_valid() then
+		local hp = self.hp or self.object:get_hp()
+		local hp_max = self.hp_max or def.hp_max or def.hp or 20
+		if hp_max > 0 then
+			local ratio = hp / hp_max
+			self._thresholds_triggered = self._thresholds_triggered or {}
+			for i = 1, #thresholds do
+				local th = thresholds[i]
+				local tid = th.id or tostring(i)
+				if not self._thresholds_triggered[tid] and ratio <= (th.hp_ratio or 0.5) then
+					if th.once ~= false then
+						self._thresholds_triggered[tid] = true
+					end
+					if th.cleanse then
+						x_mob_core.cleanse_debuffs(self.object)
+					end
+					if th.effect then
+						x_mob_core.apply_buff(self.object, th.effect)
+					end
+					if th.sound then
+						sound.play(self, th.sound)
+					end
+					if th.vfx then
+						if type(th.vfx) == "function" then
+							th.vfx(self.object:get_pos(), self)
+						elseif type(th.vfx) == "string" and effects and effects.play_preset then
+							effects.play_preset(th.vfx, self.object:get_pos())
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end)
+
 -- Priority 17: Tactical Retreat & Cornered Retaliation Hook
 pipeline.register_step_hook("tactical_retreat", 17, function(self, dtime, def, moveresult)
 	local is_fleeing = (self.state == "fleeing")

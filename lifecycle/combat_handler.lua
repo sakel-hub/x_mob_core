@@ -58,6 +58,9 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 	effects.clear_damage(self.object)
 	effects.spawn_damage_particles(self.object, puncher, dir, dmg, def)
 	health_bar.remove(self)
+	if self.object then
+		x_mob_core.clear_status_effects(self.object)
+	end
 
 	detachment.detach_attached_children(self.object)
 	if self.object then
@@ -210,6 +213,10 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 	if kb == nil then
 		kb = (def.knockback_mult ~= nil and def.knockback_mult) or 1.5
 	end
+	local res = self.object and x_mob_core.get_knockback_resilience(self.object)
+	if res and res > 0 then
+		kb = kb * math.max(0.0, 1.0 - res)
+	end
 	if tool_capabilities and tool_capabilities.damage_groups and tool_capabilities.damage_groups.knockback == 0 then
 		kb = 0
 		self._knockback_timer = 0.4
@@ -218,6 +225,61 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		self.object:add_velocity({x = dir.x * kb, y = math.min(1.8, 0.5 * kb), z = dir.z * kb})
 		self._knockback_timer = 0.4
 	end
+
+	-- Check reactive thorns on struck mob
+	if puncher and puncher:is_valid() and self.object then
+		local thorns = x_mob_core.get_thorns(self.object)
+		if thorns and (thorns.damage or 0) > 0 then
+			local chance = thorns.chance or 1.0
+			if chance >= 1.0 or math.random() <= chance then
+				local tdmg = thorns.damage
+				local ttype = thorns.damage_type or "fleshy"
+				puncher:punch(self.object, 1.0, {
+					full_punch_interval = 1.0,
+					damage_groups = { [ttype] = tdmg },
+				}, { x = 0, y = 0, z = 0 })
+			end
+		end
+	end
+
+	-- Declarative Buff Triggers (e.g. on_damaged, on_heavy_damage)
+	if def.buffs and def.buffs.triggers and self.object and not self.is_dead then
+		self._buff_trigger_cooldowns = self._buff_trigger_cooldowns or {}
+		for i = 1, #def.buffs.triggers do
+			local trig = def.buffs.triggers[i]
+			local tid = trig.id or ("trig_" .. i)
+			local cd = self._buff_trigger_cooldowns[tid] or 0
+			if cd <= 0 then
+				local matches = false
+				if trig.event == "on_damaged" then
+					matches = true
+				elseif trig.event == "on_heavy_damage" then
+					local thresh = trig.threshold_damage or ((self.hp_max or def.hp_max or 20) * 0.25)
+					matches = (dmg >= thresh)
+				end
+				if matches then
+					self._buff_trigger_cooldowns[tid] = trig.cooldown or 10.0
+					if trig.cleanse then
+						x_mob_core.cleanse_debuffs(self.object)
+					end
+					if trig.effect then
+						x_mob_core.apply_buff(self.object, trig.effect)
+					end
+					if trig.sound then
+						sound.play(self, trig.sound)
+					end
+					if trig.vfx then
+						if type(trig.vfx) == "function" then
+							trig.vfx(self.object:get_pos(), self)
+						elseif type(trig.vfx) == "string" and effects and effects.play_preset then
+							effects.play_preset(trig.vfx, self.object:get_pos())
+						end
+					end
+				end
+			end
+		end
+	end
+
 
 	-- Hit-interrupt for Tactical Disengage & Channeling
 	-- Striking a mob while fleeing or channeling cancels retreat into an immediate Last Stand

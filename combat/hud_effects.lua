@@ -12,12 +12,6 @@
 	License: MIT
 ]]
 
----@class VignetteConfig
----@field texture? string Custom texture or procedural texture modifier
----@field color? string Hex color string (e.g. "#8A2BE240" or "#FF450050")
----@field opacity? integer Opacity value 0-255
----@field z_index? integer Optional z-index override (default: -10)
-
 ---@class HudEffectsSubsystem
 local hud_effects = {}
 
@@ -232,7 +226,7 @@ function hud_effects.apply(player, effect_id, config)
 		-- First vignette for player: register single responsive fullscreen HUD element
 		local comp_tex = tex
 		local hud_id = player:hud_add({
-			hud_elem_type = "image",
+			type = "image",
 			position = { x = 0.5, y = 0.5 },
 			alignment = { x = 0, y = 0 },
 			-- Negative values tell Luanti engine to scale to 100% of viewport width and height

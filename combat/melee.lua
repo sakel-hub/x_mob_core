@@ -3,6 +3,8 @@
 	Declarative close-quarters combat handler for terrestrial, custom, and hybrid mobs.
 ]]
 
+---Universal Melee Combat Subsystem.
+---@class MeleeSubsystem
 local melee = {}
 
 local modpath = core.get_modpath("x_mob_core") or "."
@@ -52,11 +54,16 @@ function melee.perform_attack(self, target, dir, def, m_cfg)
 		m_cfg.perform_attack(self, target, dir)
 	else
 		local dmg = (m_cfg and m_cfg.damage) or def.damage or 4
+		local atk_mult = self.object and x_mob_core.get_attack_multiplier(self.object) or 1.0
+		if atk_mult and atk_mult > 0 and atk_mult ~= 1.0 then
+			dmg = math.max(1, math.floor(dmg * atk_mult + 0.5))
+		end
 		target:punch(self.object, 1.0, {
 			full_punch_interval = 1.0,
 			damage_groups = { fleshy = dmg },
 		}, dir)
 	end
+
 	if m_cfg and m_cfg.on_strike then
 		m_cfg.on_strike(self, target, dir)
 	end

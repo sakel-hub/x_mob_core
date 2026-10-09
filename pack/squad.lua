@@ -280,7 +280,7 @@ function squad.spawn_initial_followers(self, follower_type, max_count, spawn_rad
 			scratch_pos.x = pos.x + math.cos(angle) * rad
 			scratch_pos.y = pos.y
 			scratch_pos.z = pos.z + math.sin(angle) * rad
-			local static = core.serialize({ pack_id = self.pack_id })
+			local static = core.serialize({ pack_id = self.pack_id, is_follower = true })
 
 			local spawn_type
 			if type(target_type) == "table" then
