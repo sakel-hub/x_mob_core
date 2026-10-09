@@ -34,6 +34,27 @@ function animator.play(obj, track_name, params)
 		anim_def = anims[track_name]
 	end
 
+	if type(anim_def) == "table" and anim_def.range then
+		local range = anim_def.range
+		local anim_speed = (anim_def.speed or 30) * speed
+		if anim_def.loop ~= nil and params.loop == nil then
+			loop = anim_def.loop
+		end
+		if luaentity and prev_track == track_name and loop and not force then
+			if obj.set_animation_frame_speed then
+				obj:set_animation_frame_speed(anim_speed)
+			end
+			return true
+		end
+		if luaentity then
+			luaentity._current_track = track_name
+		end
+		if obj.set_animation then
+			obj:set_animation(range, anim_speed, blend or 0, loop)
+		end
+		return true
+	end
+
 	if type(anim_def) == "table" and anim_def.track then
 		target_track = anim_def.track
 		if anim_def.speed then
@@ -90,18 +111,30 @@ function animator.stop(obj, track_name)
 		local reg = x_mob_core.registered_mobs[luaentity.name]
 		anims = reg and reg.animations
 	end
+	local is_frame_anim = false
 	if track_name and anims then
 		local def = anims[track_name]
-		if type(def) == "table" and def.track then
-			target_track = def.track
+		if type(def) == "table" then
+			if def.track then
+				target_track = def.track
+			elseif def.range then
+				is_frame_anim = true
+			end
 		elseif type(def) == "string" then
 			target_track = def
 		end
 	end
-	if target_track then
+	if is_frame_anim then
+		if obj.set_animation then
+			obj:set_animation({x = 0, y = 0}, 0, 0, false)
+		end
+	elseif target_track then
 		obj:stop_animation(target_track)
 	else
 		obj:stop_animation()
+		if obj.set_animation then
+			obj:set_animation({x = 0, y = 0}, 0, 0, false)
+		end
 	end
 	if luaentity then
 		luaentity._current_track = nil
