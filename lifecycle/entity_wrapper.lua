@@ -742,7 +742,10 @@ function entity_wrapper.register_mob(name, def)
 	local original_on_punch = def.on_punch
 	def.on_punch = function(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
 		if original_on_punch then
-			return original_on_punch(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
+			local intercepted = original_on_punch(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
+			if intercepted == true then
+				return true
+			end
 		end
 		return combat_handler.handle_punch(
 			self, puncher, time_from_last_punch, tool_capabilities, dir, damage, def

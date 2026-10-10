@@ -6,6 +6,10 @@
 	- Precomputes walkability, swimability, climbability, door openability, and costs
 ]]
 
+if rawget(_G, "_x_mob_core_path_cache_subsystem") then
+	return _G._x_mob_core_path_cache_subsystem
+end
+
 ---@class PathCache
 ---@field walkable table<integer, boolean>
 ---@field swimable table<integer, boolean>
@@ -126,5 +130,7 @@ end
 
 -- Automatically register on mods loaded callback
 core.register_on_mods_loaded(path_cache.init)
+
+_G._x_mob_core_path_cache_subsystem = path_cache
 
 return path_cache

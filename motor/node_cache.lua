@@ -4,6 +4,10 @@
 	to eliminate redundant engine C++ map lookups during pathfinding and steering.
 ]]
 
+if rawget(_G, "_x_mob_core_node_cache_subsystem") then
+	return _G._x_mob_core_node_cache_subsystem
+end
+
 ---@class NodeCacheSubsystem
 local node_cache = {}
 
@@ -25,6 +29,8 @@ end
 core.register_globalstep(function()
 	node_cache.clear()
 end)
+
+_G._x_mob_core_node_cache_subsystem = node_cache
 
 --- Retrieves node table from per-step cache or queries engine
 ---@param pos Vector Node world position

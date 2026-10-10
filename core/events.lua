@@ -28,7 +28,7 @@ end
 function events.unlisten(event_name, id)
 	local list = events.listeners[event_name]
 	if list and list[id] then
-		list[id] = nil
+		list[id] = false
 		return true
 	end
 	return false

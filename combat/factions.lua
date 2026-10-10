@@ -141,7 +141,8 @@ function factions.are_allies(a, b)
 			if mob_ent.owner and player_obj.get_player_name and mob_ent.owner == player_obj:get_player_name() then
 				return true
 			end
-			if mob_ent.factions and mob_ent.factions["players"] then
+			local m_facts = factions.get_factions(mob_ent)
+			if m_facts and m_facts["players"] then
 				return true
 			end
 		end

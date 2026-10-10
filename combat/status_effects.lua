@@ -527,14 +527,17 @@ local function normalize_effect_def(def)
 		else
 			def = { id = def, type = "custom" }
 		end
-	elseif type(def) == "table" and def.preset and effect_presets[def.preset] then
-		local merged = utils.shallow_copy(effect_presets[def.preset])
-		for k, v in pairs(def) do
-			if k ~= "preset" then
-				merged[k] = v
+	elseif type(def) == "table" then
+		local preset_name = def.preset or (def.id and effect_presets[def.id] and def.id)
+		if preset_name and effect_presets[preset_name] then
+			local merged = utils.shallow_copy(effect_presets[preset_name])
+			for k, v in pairs(def) do
+				if k ~= "preset" then
+					merged[k] = v
+				end
 			end
+			def = merged
 		end
-		def = merged
 	end
 
 	local envelop_texture = def.envelop_texture
@@ -999,10 +1002,10 @@ function status_effects.apply_effect(target, effect_def)
 		 norm.on_tick_particles ~= nil)
 
 	-- Always schedule an authoritative failsafe expiration timer via core.after.
-	-- For ticking effects, an extra 0.1s grace period allows the final periodic tick to resolve.
+	-- For ticking effects, an extra 0.2s grace period allows the final periodic tick to resolve.
 	-- This guarantees that regardless of periodic ticker errors, pauses, or desyncs,
 	-- the status effect and all associated physics/visual modifiers are strictly expired.
-	local failsafe_duration = has_ticker and (norm.duration + 0.1) or norm.duration
+	local failsafe_duration = has_ticker and (norm.duration + 0.2) or norm.duration
 	core.after(failsafe_duration, function()
 		if not target or not target:is_valid() then return end
 		local k = get_target_key(target)
