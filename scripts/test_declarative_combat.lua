@@ -105,6 +105,17 @@ _G.x_mob_core = {
 	events = events,
 	safety = safety,
 	emit = events.emit,
+	get_attack_multiplier = function(_target) return 1.0 end,
+	get_damage_multiplier = function(_target) return 1.0 end,
+	get_knockback_resilience = function(_target) return 0.0 end,
+	get_speed_multiplier = function(_target) return 1.0 end,
+	get_thorns = function(_target) return nil end,
+	clear_status_effects = function(_target) end,
+	has_status_effect = function(_target, _name) return false end,
+	get_status_effects = function(_target) return {} end,
+	cleanse_debuffs = function(_target) return 0 end,
+	dispel_buffs = function(_target) return 0 end,
+	apply_buff = function(_target, _name, _data) return false end,
 }
 
 local factions = dofile("./combat/factions.lua")

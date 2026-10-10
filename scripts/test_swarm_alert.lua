@@ -73,6 +73,16 @@ _G.x_mob_core = {
 		},
 	},
 	get_damage_multiplier = function() return 1.0 end,
+	get_attack_multiplier = function() return 1.0 end,
+	get_knockback_resilience = function() return 0.0 end,
+	get_speed_multiplier = function() return 1.0 end,
+	get_thorns = function() return nil end,
+	clear_status_effects = function() end,
+	has_status_effect = function() return false end,
+	get_status_effects = function() return {} end,
+	cleanse_debuffs = function() return 0 end,
+	dispel_buffs = function() return 0 end,
+	apply_buff = function() return false end,
 }
 
 local coordination = dofile("pack/coordination.lua")

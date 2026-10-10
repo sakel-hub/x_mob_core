@@ -28,6 +28,19 @@ dofile(modpath .. "/core/types.lua")
 x_mob_core = {
 	registered_mobs = {},
 	registered_spawns = {},
+
+	-- Safe baseline contract stubs (overridden by submodules upon load)
+	get_attack_multiplier = function(_target) return 1.0 end,
+	get_damage_multiplier = function(_target) return 1.0 end,
+	get_knockback_resilience = function(_target) return 0.0 end,
+	get_speed_multiplier = function(_target) return 1.0 end,
+	get_thorns = function(_target) return nil end,
+	clear_status_effects = function(_target) end,
+	has_status_effect = function(_target, _id) return false end,
+	get_status_effects = function(_target) return {} end,
+	cleanse_debuffs = function(_target) return 0 end,
+	dispel_buffs = function(_target) return 0 end,
+	apply_buff = function(_target, _preset_or_def, _overrides) return false end,
 }
 
 -- Core utilities and event dispatcher
@@ -36,6 +49,13 @@ x_mob_core.utils = dofile(modpath .. "/core/utils.lua")
 
 ---@type table Pub-sub event dispatcher subsystem
 x_mob_core.events = dofile(modpath .. "/core/events.lua")
+
+-- Foundational Audio & Animation Services
+---@type SoundSubsystem
+x_mob_core.sound = dofile(modpath .. "/audio/sound.lua")
+
+---@type table Skeletal animation player
+x_mob_core.animator = dofile(modpath .. "/animation/animator.lua")
 
 -- Navigation & Pathfinding
 ---@type MinHeap Binary min-heap priority queue
@@ -61,31 +81,43 @@ x_mob_core.motor = {
 	ai = dofile(modpath .. "/motor/mob_ai.lua"),
 }
 
--- Animation Subsystem
----@type table Skeletal animation player
-x_mob_core.animator = dofile(modpath .. "/animation/animator.lua")
+-- Combat Subsystems (Loaded in Topological Order: Primitives -> Status Effects -> Attack Handlers)
+local combat_factions = dofile(modpath .. "/combat/factions.lua")
+local combat_particles = dofile(modpath .. "/combat/particles.lua")
+local combat_health_bar = dofile(modpath .. "/combat/health_bar.lua")
+local combat_envelop = dofile(modpath .. "/combat/envelop.lua")
+local combat_hunger_adapter = dofile(modpath .. "/combat/hunger_adapter.lua")
+local combat_hud_effects = dofile(modpath .. "/combat/hud_effects.lua")
+local combat_status_effects = dofile(modpath .. "/combat/status_effects.lua")
 
--- Combat Subsystems
+local combat_knockback = dofile(modpath .. "/combat/knockback.lua")
+local combat_damage = dofile(modpath .. "/combat/damage.lua")
+local combat_effects = dofile(modpath .. "/combat/effects.lua")
+local combat_detachment = dofile(modpath .. "/combat/detachment.lua")
+local combat_loot = dofile(modpath .. "/combat/loot.lua")
+local combat_melee = dofile(modpath .. "/combat/melee.lua")
+local combat_shooter = dofile(modpath .. "/combat/shooter.lua")
+
 ---@type table<string, table> Combat calculation, knockback, damage effects, and child detachment subsystems
 x_mob_core.combat = {
-	damage = dofile(modpath .. "/combat/damage.lua"),
-	knockback = dofile(modpath .. "/combat/knockback.lua"),
-	effects = dofile(modpath .. "/combat/effects.lua"),
-	detachment = dofile(modpath .. "/combat/detachment.lua"),
-	loot = dofile(modpath .. "/combat/loot.lua"),
-	melee = dofile(modpath .. "/combat/melee.lua"),
-	shooter = dofile(modpath .. "/combat/shooter.lua"),
-	factions = dofile(modpath .. "/combat/factions.lua"),
-	health_bar = dofile(modpath .. "/combat/health_bar.lua"),
-	particles = dofile(modpath .. "/combat/particles.lua"),
-	envelop = dofile(modpath .. "/combat/envelop.lua"),
-	hunger_adapter = dofile(modpath .. "/combat/hunger_adapter.lua"),
-	hud_effects = dofile(modpath .. "/combat/hud_effects.lua"),
-	status_effects = dofile(modpath .. "/combat/status_effects.lua"),
+	factions = combat_factions,
+	particles = combat_particles,
+	health_bar = combat_health_bar,
+	envelop = combat_envelop,
+	hunger_adapter = combat_hunger_adapter,
+	hud_effects = combat_hud_effects,
+	status_effects = combat_status_effects,
+	knockback = combat_knockback,
+	damage = combat_damage,
+	effects = combat_effects,
+	detachment = combat_detachment,
+	loot = combat_loot,
+	melee = combat_melee,
+	shooter = combat_shooter,
 }
 
 ---@type table Status effects, buffs, and debuffs subsystem
-x_mob_core.status_effects = x_mob_core.combat.status_effects
+x_mob_core.status_effects = combat_status_effects
 
 -- Spawner Engine
 ---@type table Natural spawning engine and spawn registry
@@ -99,10 +131,6 @@ x_mob_core.pack = {
 	swarm = dofile(modpath .. "/pack/swarm.lua"),
 	shoal = dofile(modpath .. "/pack/shoal.lua"),
 }
-
--- Audio & Sound Subsystem
----@type SoundSubsystem
-x_mob_core.sound = dofile(modpath .. "/audio/sound.lua")
 
 -- Lifecycle & Entity Registration
 ---@type table<string, table> Entity registration wrapper and state machine
