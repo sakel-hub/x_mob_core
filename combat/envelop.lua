@@ -10,6 +10,8 @@
 ]]
 
 local S = core.get_translator("x_mob_core")
+local modpath = core.get_modpath("x_mob_core") or "."
+local animator = (x_mob_core and x_mob_core.animator) or dofile(modpath .. "/animation/animator.lua")
 
 --- Active enveloped targets tracking
 --- Key: player_name string or mob LuaEntity table
@@ -138,7 +140,7 @@ core.register_entity("x_mob_core:envelop", {
 			collisionbox = {0, 0, 0, 0, 0, 0},
 			collide_with_objects = false,
 		})
-		self.object:play_animation("pulse", { speed = 1.0, loop = true })
+		animator.play(self.object, "pulse", { speed = 1.0, loop = true })
 
 		-- Self-clean if spawned without target
 		if not self.target then
@@ -414,7 +416,7 @@ function x_mob_core.apply_envelop(target, effect_def)
 		glow = 8,
 	})
 
-	envelop_obj:play_animation("pulse", { speed = 1.0, loop = true })
+	animator.play(envelop_obj, "pulse", { speed = 1.0, loop = true })
 	envelop_obj:set_attach(target, "", attach_pos, {x = 0, y = 0, z = 0}, true)
 
 	active_envelops[key] = {

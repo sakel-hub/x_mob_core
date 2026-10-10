@@ -26,7 +26,7 @@ function animator.play(obj, track_name, params)
 	local target_track = track_name
 	local anim_def = nil
 	local anims = luaentity and (luaentity.animations or (luaentity._def and luaentity._def.animations))
-	if not anims and luaentity and luaentity.name then
+	if not anims and luaentity and luaentity.name and x_mob_core.registered_mobs then
 		local reg = x_mob_core.registered_mobs[luaentity.name]
 		anims = reg and reg.animations
 	end
@@ -69,7 +69,9 @@ function animator.play(obj, track_name, params)
 
 	if luaentity and prev_track == target_track and loop and not force then
 		-- Track is already looping actively; update parameters without restarting
-		obj:update_animation(target_track, {speed = speed})
+		if obj.update_animation then
+			obj:update_animation(target_track, {speed = speed})
+		end
 		return true
 	end
 
@@ -78,24 +80,26 @@ function animator.play(obj, track_name, params)
 	end
 
 	-- Stop other animation tracks when switching to avoid multi-track blending
-	local active = obj:get_animations()
+	local active = obj.get_animations and obj:get_animations()
 	if active then
 		for t, _ in pairs(active) do
-			if t ~= target_track then
+			if t ~= target_track and obj.stop_animation then
 				obj:stop_animation(t)
 			end
 		end
-	elseif prev_track and prev_track ~= target_track then
+	elseif prev_track and prev_track ~= target_track and obj.stop_animation then
 		obj:stop_animation(prev_track)
 	end
 
 	-- Modern Luanti glTF animation track playback
-	obj:play_animation(target_track, {
-		speed = speed,
-		loop = loop,
-		blend = blend,
-		priority = priority,
-	})
+	if obj.play_animation then
+		obj:play_animation(target_track, {
+			speed = speed,
+			loop = loop,
+			blend = blend,
+			priority = priority,
+		})
+	end
 	return true
 end
 
@@ -107,7 +111,7 @@ function animator.stop(obj, track_name)
 	local luaentity = obj:get_luaentity()
 	local target_track = track_name
 	local anims = luaentity and (luaentity.animations or (luaentity._def and luaentity._def.animations))
-	if not anims and luaentity and luaentity.name then
+	if not anims and luaentity and luaentity.name and x_mob_core.registered_mobs then
 		local reg = x_mob_core.registered_mobs[luaentity.name]
 		anims = reg and reg.animations
 	end
@@ -129,9 +133,13 @@ function animator.stop(obj, track_name)
 			obj:set_animation({x = 0, y = 0}, 0, 0, false)
 		end
 	elseif target_track then
-		obj:stop_animation(target_track)
+		if obj.stop_animation then
+			obj:stop_animation(target_track)
+		end
 	else
-		obj:stop_animation()
+		if obj.stop_animation then
+			obj:stop_animation()
+		end
 		if obj.set_animation then
 			obj:set_animation({x = 0, y = 0}, 0, 0, false)
 		end
