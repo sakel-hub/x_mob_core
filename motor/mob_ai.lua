@@ -48,6 +48,7 @@ local check_and_open_forward_doors = doors.check_and_open_forward_doors
 local find_adjacent_surface = surface.find_adjacent_surface
 local dir_to_surface_rotation = surface.dir_to_surface_rotation
 local interpolate_rotation = surface.interpolate_rotation
+local set_crawler_state = surface.set_crawler_state
 
 local is_aquatic_mob = safety.is_aquatic_mob
 local check_in_liquid = safety.check_in_liquid
@@ -161,40 +162,27 @@ function mob_ai.update_navigation(self, dtime)
 		end
 	end
 
-	local on_wall_or_ceiling = self._cur_rot and (math.abs(self._cur_rot.x) > 0.4 or math.abs(self._cur_rot.z) > 0.4)
+	local on_wall_or_ceiling = (self.on_wall_or_ceiling == true) or
+		(self._cur_rot and (math.abs(self._cur_rot.x) > 0.4 or math.abs(self._cur_rot.z) > 0.4))
 	local is_crawler = self.abilities and self.abilities.can_crawl == true
 	local adj_surf = nil
 
 	if is_crawler then
 		local ceiling_norm = (self._cur_rot and math.abs(self._cur_rot.z) > 2.0) and {x = 0, y = -1, z = 0} or nil
-		local pref_norm = self._cur_normal or ceiling_norm
+		local pref_norm = self._cur_normal or (on_wall_or_ceiling and ceiling_norm) or {x = 0, y = 1, z = 0}
 		adj_surf = find_adjacent_surface(current_pos, pref_norm)
 
 		local following_wall_wpt = self.path_state and self.path_state.waypoints and
 			self.path_state.index <= #self.path_state.waypoints and
-			self.path_state.waypoints[self.path_state.index].surface_type == "wall"
-
-		local surface_selbox = self.selectionbox
-			or (self.initial_properties and self.initial_properties.selectionbox)
-			or {-0.85, -0.65, -0.85, 0.85, 0.65, 0.85}
-
-		local ground_cbox = self.collisionbox
-			or (self.initial_properties and self.initial_properties.collisionbox)
-			or {-0.35, 0.0, -0.35, 0.35, 0.45, 0.35}
+			(self.path_state.waypoints[self.path_state.index].surface_type == "wall" or
+			 self.path_state.waypoints[self.path_state.index].surface_type == "ceiling")
 
 		if on_wall_or_ceiling and not adj_surf then
 			-- PHYSICAL ADJACENCY WATCHDOG: Detach immediately and fall under gravity
 			on_wall_or_ceiling = false
-			self.on_wall_or_ceiling = false
-			self._has_wall_cbox = false
-			self._cur_normal = nil
+			set_crawler_state(self, false, nil, current_pos)
 			self._cur_rot = {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
 			safe_set_rotation(self.object, self._cur_rot)
-			safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
-			self.object:set_properties({
-				collisionbox = ground_cbox,
-				selectionbox = surface_selbox,
-			})
 			if self.path_state then
 				self.path_state.waypoints = nil
 				self.path_state.index = 1
@@ -202,28 +190,15 @@ function mob_ai.update_navigation(self, dtime)
 		elseif on_wall_or_ceiling and adj_surf and adj_surf.surface_type == "floor" and not following_wall_wpt then
 			-- Transitioning back onto floor gracefully without clearing waypoints
 			on_wall_or_ceiling = false
-			self.on_wall_or_ceiling = false
-			self._has_wall_cbox = false
-			self._cur_normal = {x = 0, y = 1, z = 0}
+			set_crawler_state(self, false, {x = 0, y = 1, z = 0}, current_pos)
 			self._cur_rot = {x = 0, y = safe_get_yaw(self.object) or 0, z = 0}
 			safe_set_rotation(self.object, self._cur_rot)
-			safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
-			self.object:set_properties({
-				collisionbox = ground_cbox,
-				selectionbox = surface_selbox,
-			})
 		elseif adj_surf and (adj_surf.surface_type == "wall" or adj_surf.surface_type == "ceiling") then
 			on_wall_or_ceiling = true
-			self.on_wall_or_ceiling = true
-			self._cur_normal = adj_surf.normal
-			safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-			if self.object and not self._has_wall_cbox then
-				self._has_wall_cbox = true
-				self.object:set_properties({
-					collisionbox = {-0.20, -0.20, -0.20, 0.20, 0.20, 0.20},
-					selectionbox = surface_selbox,
-				})
-			end
+			set_crawler_state(self, true, adj_surf.normal, current_pos)
+		else
+			on_wall_or_ceiling = false
+			set_crawler_state(self, false, (adj_surf and adj_surf.normal) or {x = 0, y = 1, z = 0}, current_pos)
 		end
 	end
 
@@ -777,33 +752,19 @@ function mob_ai.update_navigation(self, dtime)
 			if is_crawler and not on_wall_or_ceiling and not self.is_floating then
 				local check_pos = {
 					x = math.floor(current_pos.x + move_vec.x * 0.95 + 0.5),
-					y = math.floor(current_pos.y + 0.5),
+					y = math.floor(current_pos.y + 0.18 + 0.5),
 					z = math.floor(current_pos.z + move_vec.z * 0.95 + 0.5),
 				}
 				local c_node = node_cache.get_node(check_pos)
 				local c_def = core.registered_nodes[c_node.name]
 				if c_def and c_def.walkable then
-					self.on_wall_or_ceiling = true
-					safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-
 					local wn = {
 						x = (current_pos.x > check_pos.x) and 1 or ((current_pos.x < check_pos.x) and -1 or 0),
 						y = 0,
 						z = (current_pos.z > check_pos.z) and 1 or ((current_pos.z < check_pos.z) and -1 or 0),
 					}
 					if wn.x == 0 and wn.z == 0 then wn.x = -move_vec.x end
-					self._cur_normal = wn
-
-					if self.object and not self._has_wall_cbox then
-						self._has_wall_cbox = true
-						local climb_selbox = self.selectionbox
-							or (self.initial_properties and self.initial_properties.selectionbox)
-							or {-0.85, -0.65, -0.85, 0.85, 0.65, 0.85}
-						self.object:set_properties({
-							collisionbox = {-0.20, -0.20, -0.20, 0.20, 0.20, 0.20},
-							selectionbox = climb_selbox,
-						})
-					end
+					set_crawler_state(self, true, wn, current_pos)
 
 					local climb_speed = speed * 0.85
 					self.object:set_velocity({

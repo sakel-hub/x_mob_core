@@ -4,17 +4,16 @@
 	to eliminate redundant engine C++ map lookups during pathfinding and steering.
 ]]
 
-if rawget(_G, "_x_mob_core_node_cache_subsystem") then
-	return _G._x_mob_core_node_cache_subsystem
+local existing = rawget(_G, "_x_mob_core_node_cache_subsystem")
+if existing then
+	return existing
 end
 
 ---@class NodeCacheSubsystem
 local node_cache = {}
 
-local global_node_cache = _G._x_mob_core_node_cache or {}
-local global_node_or_nil_cache = _G._x_mob_core_node_or_nil_cache or {}
-_G._x_mob_core_node_cache = global_node_cache
-_G._x_mob_core_node_or_nil_cache = global_node_or_nil_cache
+local global_node_cache = {}
+local global_node_or_nil_cache = {}
 
 --- Clears the per-step node caches
 function node_cache.clear()

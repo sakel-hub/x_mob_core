@@ -399,35 +399,7 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 
 	if is_crawler then
 		local on_surface = (surface_type == "wall" or surface_type == "ceiling")
-		self.on_wall_or_ceiling = on_surface
-		if on_surface then
-			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
-		else
-			locomotion.safe_set_acceleration(self.object, {x = 0, y = -9.81, z = 0})
-		end
-
-		local SPIDER_SELBOX = {-0.85, -0.65, -0.85, 0.85, 0.65, 0.85}
-		if self.object and self.object:is_valid() then
-			local selbox = self.selectionbox
-				or (self.initial_properties and self.initial_properties.selectionbox)
-				or SPIDER_SELBOX
-			if on_surface and not self._has_wall_cbox then
-				self._has_wall_cbox = true
-				self.object:set_properties({
-					collisionbox = {-0.20, -0.20, -0.20, 0.20, 0.20, 0.20},
-					selectionbox = selbox,
-				})
-			elseif not on_surface and self._has_wall_cbox then
-				self._has_wall_cbox = false
-				local ground_cbox = self.collisionbox
-					or (self.initial_properties and self.initial_properties.collisionbox)
-					or {-0.35, 0.0, -0.35, 0.35, 0.45, 0.35}
-				self.object:set_properties({
-					collisionbox = ground_cbox,
-					selectionbox = selbox,
-				})
-			end
-		end
+		surface.set_crawler_state(self, on_surface, self._cur_normal or normal, current_pos)
 
 		local target_wpt = {
 			x = next_waypoint.x - (normal.x * 0.30),
@@ -1097,21 +1069,19 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 		local c_dir = self._flee_dir or threat_repulse
 		local check_pos = {
 			x = math.floor(current_pos.x + c_dir.x * 0.95 + 0.5),
-			y = math.floor(current_pos.y + 0.5),
+			y = math.floor(current_pos.y + 0.18 + 0.5),
 			z = math.floor(current_pos.z + c_dir.z * 0.95 + 0.5),
 		}
 		local c_node = node_cache.get_node(check_pos)
 		local c_def = core.registered_nodes[c_node.name]
 		if c_def and c_def.walkable then
-			self.on_wall_or_ceiling = true
-			locomotion.safe_set_acceleration(self.object, {x = 0, y = 0, z = 0})
 			local wn = {
 				x = (current_pos.x > check_pos.x) and 1 or ((current_pos.x < check_pos.x) and -1 or 0),
 				y = 0,
 				z = (current_pos.z > check_pos.z) and 1 or ((current_pos.z < check_pos.z) and -1 or 0),
 			}
 			if wn.x == 0 and wn.z == 0 then wn.x = -c_dir.x end
-			self._cur_normal = wn
+			surface.set_crawler_state(self, true, wn, current_pos)
 			local climb_speed = speed * 0.9
 			self.object:set_velocity({
 				x = -wn.x * 0.25,

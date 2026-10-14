@@ -108,6 +108,10 @@ function surface.interpolate_vector(v1, v2, factor)
 	return v2
 end
 
+surface.WALL_CBOX = {-0.20, -0.20, -0.20, 0.20, 0.20, 0.20}
+surface.DEFAULT_GROUND_CBOX = {-0.35, 0.0, -0.35, 0.35, 0.45, 0.35}
+surface.DEFAULT_SELBOX = {-0.85, -0.65, -0.85, 0.85, 0.65, 0.85}
+
 --- Checks whether an entity is physically adjacent to a solid walkable surface
 --- (floor, wall, ceiling, or uneven corner) within reach (~1.15m).
 --- Retains preferred_normal if the existing surface is still in contact (hysteresis).
@@ -132,10 +136,14 @@ function surface.find_adjacent_surface(pos, preferred_normal)
 			local un_y = (preferred_normal.y or 0) / pn_len
 			local un_z = (preferred_normal.z or 0) / pn_len
 
+			-- Bias horizontal wall probes slightly upward (+0.18) so entities resting on
+			-- a floor boundary (cy ~ Y_floor + 0.5) do not sample the floor block beneath them.
+			local y_bias = (math.abs(un_y) < 0.25) and 0.18 or 0.0
+
 			-- Solid node is located in the direction opposite to the surface normal
 			local check_npos = {
 				x = math.floor(cx - un_x * 0.95 + 0.5),
-				y = math.floor(cy - un_y * 0.95 + 0.5),
+				y = math.floor(cy + y_bias - un_y * 0.95 + 0.5),
 				z = math.floor(cz - un_z * 0.95 + 0.5),
 			}
 			local node = node_cache.get_node(check_npos)
@@ -148,12 +156,13 @@ function surface.find_adjacent_surface(pos, preferred_normal)
 	end
 
 	-- Primary cardinal surface checks
-	-- Walls and ceiling are checked first so crawlers near floor-wall transitions detect the wall!
+	-- Horizontal wall checks use +0.18 vertical offset so a crawler with ymin = 0.0
+	-- resting on a floor face (cy ~ Y_floor + 0.499) samples Y_floor + 1 rather than Y_floor.
 	local checks = {
-		{0.85, 0, 0, {x = -1, y = 0, z = 0}, "wall"},
-		{-0.85, 0, 0, {x = 1, y = 0, z = 0}, "wall"},
-		{0, 0, 0.85, {x = 0, y = 0, z = -1}, "wall"},
-		{0, 0, -0.85, {x = 0, y = 0, z = 1}, "wall"},
+		{0.85, 0.18, 0, {x = -1, y = 0, z = 0}, "wall"},
+		{-0.85, 0.18, 0, {x = 1, y = 0, z = 0}, "wall"},
+		{0, 0.18, 0.85, {x = 0, y = 0, z = -1}, "wall"},
+		{0, 0.18, -0.85, {x = 0, y = 0, z = 1}, "wall"},
 		{0, 0.85, 0, {x = 0, y = -1, z = 0}, "ceiling"},
 		{0, -0.85, 0, {x = 0, y = 1, z = 0}, "floor"},
 	}
@@ -179,14 +188,14 @@ function surface.find_adjacent_surface(pos, preferred_normal)
 		{-0.75, 0.75, 0, {x = diag_n, y = -diag_n, z = 0}, "ceiling"},
 		{0, 0.75, 0.75, {x = 0, y = -diag_n, z = -diag_n}, "ceiling"},
 		{0, 0.75, -0.75, {x = 0, y = -diag_n, z = diag_n}, "ceiling"},
-		{0.75, -0.75, 0, {x = -diag_n, y = diag_n, z = 0}, "wall"},
-		{-0.75, -0.75, 0, {x = diag_n, y = diag_n, z = 0}, "wall"},
-		{0, -0.75, 0.75, {x = 0, y = diag_n, z = -diag_n}, "wall"},
-		{0, -0.75, -0.75, {x = 0, y = diag_n, z = diag_n}, "wall"},
-		{0.75, 0, 0.75, {x = -diag_n, y = 0, z = -diag_n}, "wall"},
-		{-0.75, 0, 0.75, {x = diag_n, y = 0, z = -diag_n}, "wall"},
-		{0.75, 0, -0.75, {x = -diag_n, y = 0, z = diag_n}, "wall"},
-		{-0.75, 0, -0.75, {x = -diag_n, y = 0, z = diag_n}, "wall"},
+		{0.75, 0.18, 0.75, {x = -diag_n, y = 0, z = -diag_n}, "wall"},
+		{-0.75, 0.18, 0.75, {x = diag_n, y = 0, z = -diag_n}, "wall"},
+		{0.75, 0.18, -0.75, {x = -diag_n, y = 0, z = diag_n}, "wall"},
+		{-0.75, 0.18, -0.75, {x = diag_n, y = 0, z = diag_n}, "wall"},
+		{0.75, -0.75, 0, {x = -diag_n, y = diag_n, z = 0}, "floor"},
+		{-0.75, -0.75, 0, {x = diag_n, y = diag_n, z = 0}, "floor"},
+		{0, -0.75, 0.75, {x = 0, y = diag_n, z = -diag_n}, "floor"},
+		{0, -0.75, -0.75, {x = 0, y = diag_n, z = diag_n}, "floor"},
 	}
 
 	for i = 1, #diag_checks do
@@ -204,6 +213,82 @@ function surface.find_adjacent_surface(pos, preferred_normal)
 	end
 
 	return nil
+end
+
+--- Applies crawler surface attachment or detachment state, updating gravity, surface normal,
+--- collisionbox/selectionbox properties, and depenetrating from floor nodes when switching to wall cbox.
+---@param self table Mob entity instance
+---@param on_surface boolean True if attaching to wall/ceiling, false if on floor or airborne
+---@param normal? Vector Active surface normal (or nil when airborne)
+---@param current_pos? Vector Current entity position (updated in-place if depenetrated)
+function surface.set_crawler_state(self, on_surface, normal, current_pos)
+	self.on_wall_or_ceiling = on_surface == true
+	self._cur_normal = normal
+
+	local obj = self.object
+	if not obj or (obj.is_valid and not obj:is_valid()) then
+		return
+	end
+
+	if on_surface then
+		if obj.set_acceleration then
+			obj:set_acceleration({x = 0, y = 0, z = 0})
+		end
+	else
+		if obj.set_acceleration then
+			obj:set_acceleration({x = 0, y = -9.81, z = 0})
+		end
+	end
+
+	local selbox = self.selectionbox
+		or (self.initial_properties and self.initial_properties.selectionbox)
+		or surface.DEFAULT_SELBOX
+
+	if on_surface and not self._has_wall_cbox then
+		self._has_wall_cbox = true
+		if obj.set_properties then
+			obj:set_properties({
+				collisionbox = surface.WALL_CBOX,
+				selectionbox = selbox,
+			})
+		end
+
+		-- Depenetrate upward if transitioning from floor cbox (ymin = 0.0) to wall cbox (ymin = -0.20)
+		-- while resting on a solid floor node (top face at floor_y + 0.5).
+		local pos = current_pos or (obj.get_pos and obj:get_pos())
+		if pos and core.registered_nodes then
+			local floor_y = math.floor(pos.y - 0.55 + 0.5)
+			local fnode = node_cache.get_node({
+				x = math.floor(pos.x + 0.5),
+				y = floor_y,
+				z = math.floor(pos.z + 0.5),
+			})
+			local fdef = fnode and core.registered_nodes[fnode.name]
+			if fdef and fdef.walkable then
+				local min_safe_y = floor_y + 0.5 + 0.22
+				if pos.y < min_safe_y then
+					pos.y = min_safe_y
+					if current_pos then
+						current_pos.y = min_safe_y
+					end
+					if obj.set_pos then
+						obj:set_pos({x = pos.x, y = pos.y, z = pos.z})
+					end
+				end
+			end
+		end
+	elseif not on_surface and self._has_wall_cbox then
+		self._has_wall_cbox = false
+		local ground_cbox = self.collisionbox
+			or (self.initial_properties and self.initial_properties.collisionbox)
+			or surface.DEFAULT_GROUND_CBOX
+		if obj.set_properties then
+			obj:set_properties({
+				collisionbox = ground_cbox,
+				selectionbox = selbox,
+			})
+		end
+	end
 end
 
 return surface
