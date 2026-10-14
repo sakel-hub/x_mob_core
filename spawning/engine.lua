@@ -6,8 +6,10 @@
 ---@class SpawningEngine
 local engine = {}
 
-local registry = dofile(core.get_modpath("x_mob_core") .. "/spawning/registry.lua")
-local conditions = dofile(core.get_modpath("x_mob_core") .. "/spawning/conditions.lua")
+local modpath = core.get_modpath("x_mob_core") or "."
+local utils = dofile(modpath .. "/core/utils.lua")
+local registry = dofile(modpath .. "/spawning/registry.lua")
+local conditions = dofile(modpath .. "/spawning/conditions.lua")
 
 local math_random = math.random
 local math_floor = math.floor
@@ -33,6 +35,47 @@ local FRONT_ARC_RAD = math_rad(FRONT_ARC_DEG)
 local scratch_top_pos = {x = 0, y = 0, z = 0}
 local scratch_bot_pos = {x = 0, y = 0, z = 0}
 local scratch_spawn_pos = {x = 0, y = 0, z = 0}
+
+--- Finds a valid ground or water surface Y in a vertical column, skipping solid ceilings and non-walkable flora
+---@param tx number X coordinate
+---@param center_y number Center Y coordinate
+---@param tz number Z coordinate
+---@param half_range? number Vertical search half-range (default: 15)
+---@return integer|nil ground_y Integer Y coordinate of ground/water surface node, or nil
+local function find_spawn_ground_y(tx, center_y, tz, half_range)
+	local range = half_range or 15
+	local surf_y = utils.get_ground_y({x = tx, y = center_y, z = tz}, range, range, true, true)
+	if surf_y then
+		return math_floor(surf_y)
+	end
+
+	-- Fallback raycast when custom Raycast is injected in tests, still enforcing passable space above
+	if type(Raycast) == "function" then
+		scratch_top_pos.x = tx
+		scratch_top_pos.y = math_min(31000, math_floor(center_y + range + 0.5))
+		scratch_top_pos.z = tz
+		scratch_bot_pos.x = tx
+		scratch_bot_pos.y = math_max(-31000, math_floor(center_y - range + 0.5))
+		scratch_bot_pos.z = tz
+
+		local ray = Raycast(scratch_top_pos, scratch_bot_pos, false, true)
+		for pt in ray do
+			if pt.type == "node" and pt.under then
+				local n = core.get_node(pt.under)
+				if n and n.name ~= "air" and n.name ~= "ignore" then
+					local ndef = core.registered_nodes and core.registered_nodes[n.name]
+					local is_surface = not ndef or ndef.walkable or (ndef.liquidtype and ndef.liquidtype ~= "none")
+					if is_surface and utils.is_passable_node(tx, pt.under.y + 1, tz, true) then
+						return pt.under.y
+					end
+				end
+			end
+		end
+	end
+
+	return nil
+end
+engine.find_spawn_ground_y = find_spawn_ground_y
 
 --- Spawns a cohesive group of mobs scattered safely around a center point
 ---@param spawn_pos Vector World center position
@@ -68,48 +111,55 @@ local function spawn_mob_group(spawn_pos, def, source)
 		end
 	end
 
-	for i = 1, to_spawn do
-		local target_pos = base_spawn_pos
-		if i > 1 then
-			if is_aquatic then
-				local ox = math.random(-2, 2)
-				local oz = math.random(-2, 2)
-				local oy = math.random(-1, 0)
-				local check_pos = {x = base_spawn_pos.x + ox, y = base_spawn_pos.y + oy, z = base_spawn_pos.z + oz}
-				local n_cur = core.get_node(check_pos)
-				if core.get_item_group(n_cur.name, "water") > 0 then
-					target_pos = check_pos
-				end
-			else
-				-- Scatter companions in a 2-3 block horizontal radius
-				local ox = math.random(-2, 2)
-				local oz = math.random(-2, 2)
-				local candidate_ground = nil
+	if not utils.is_passable_node(base_spawn_pos, is_aquatic) then
+		return 0
+	end
 
-				for oy = 1, -2, -1 do
-					local check_pos = {x = spawn_pos.x + ox, y = spawn_pos.y + oy, z = spawn_pos.z + oz}
-					local check_under = {x = spawn_pos.x + ox, y = spawn_pos.y + oy - 1, z = spawn_pos.z + oz}
-					local n_cur = core.get_node(check_pos)
-					local n_und = core.get_node(check_under)
-					if n_cur.name == "air" and n_und.name ~= "air" and n_und.name ~= "ignore" then
-						local ndef = core.registered_nodes[n_und.name]
-						if ndef and ndef.walkable and not (ndef.liquidtype and ndef.liquidtype ~= "none")
-							and not (def._parsed_exclude_nodes and def._parsed_exclude_nodes[n_und.name]) then
-							candidate_ground = check_pos
+	local y_offset = is_aquatic and 0 or utils.get_spawn_y_offset(mdef)
+
+	for i = 1, to_spawn do
+		local target_pos = (i == 1) and base_spawn_pos or nil
+		if i > 1 then
+			for _ = 1, 4 do
+				local ox = math.random(-2, 2)
+				local oz = math.random(-2, 2)
+				if ox ~= 0 or oz ~= 0 then
+					if is_aquatic then
+						local oy = math.random(-1, 0)
+						local check_pos = {x = base_spawn_pos.x + ox, y = base_spawn_pos.y + oy, z = base_spawn_pos.z + oz}
+						local n_cur = core.get_node(check_pos)
+						if core.get_item_group(n_cur.name, "water") > 0 and
+							utils.has_spawn_clearance(check_pos, mdef, true) then
+							target_pos = check_pos
+							break
+						end
+					else
+						-- Scatter companions in a 2-block horizontal radius with full condition & clearance check
+						for oy = 1, -2, -1 do
+							local check_pos = {x = spawn_pos.x + ox, y = spawn_pos.y + oy, z = spawn_pos.z + oz}
+							if conditions.check(check_pos, def, true, true) then
+								target_pos = check_pos
+								break
+							end
+						end
+						if target_pos then
 							break
 						end
 					end
 				end
-
-				if candidate_ground then
-					target_pos = candidate_ground
-				end
 			end
 		end
 
-		local obj = core.add_entity(target_pos, def.mob_name)
-		if obj then
-			spawned = spawned + 1
+		if target_pos then
+			local entity_pos = (y_offset > 0) and {
+				x = target_pos.x,
+				y = target_pos.y + y_offset,
+				z = target_pos.z,
+			} or target_pos
+			local obj = core.add_entity(entity_pos, def.mob_name)
+			if obj then
+				spawned = spawned + 1
+			end
 		end
 	end
 
@@ -273,49 +323,24 @@ core.register_globalstep(function(dtime)
 				local tx = math_floor(p_pos.x + math_cos(angle) * dist + 0.5)
 				local tz = math_floor(p_pos.z + math_sin(angle) * dist + 0.5)
 
-				local min_y = math_max(-31000, math_floor(p_pos.y - 15 + 0.5))
-				local max_y = math_min(31000, math_floor(p_pos.y + 15 + 0.5))
+				local ground_y = find_spawn_ground_y(tx, p_pos.y, tz, 15)
+				if ground_y then
+					scratch_spawn_pos.x = tx
+					scratch_spawn_pos.y = ground_y + 1
+					scratch_spawn_pos.z = tz
 
-				scratch_top_pos.x = tx
-				scratch_top_pos.y = max_y
-				scratch_top_pos.z = tz
+					local def = spawns[math_random(1, num_spawns)]
+					-- Calibrated probability scaling: P(attempt) = 75 / def.chance
+					local scaled_chance = math_max(1, math_floor((def.chance or 1000) / 75))
 
-				scratch_bot_pos.x = tx
-				scratch_bot_pos.y = min_y
-				scratch_bot_pos.z = tz
-
-				local node_top = core.get_node_or_nil(scratch_top_pos)
-				if node_top then
-					local ground_y = nil
-					local ray = Raycast(scratch_top_pos, scratch_bot_pos, false, true)
-					for pt in ray do
-						if pt.type == "node" then
-							local n = core.get_node(pt.under)
-							if n.name ~= "air" and n.name ~= "ignore" then
-								ground_y = pt.under.y
-								break
-							end
-						end
-					end
-
-					if ground_y then
-						scratch_spawn_pos.x = tx
-						scratch_spawn_pos.y = ground_y + 1
-						scratch_spawn_pos.z = tz
-
-						local def = spawns[math_random(1, num_spawns)]
-						-- Calibrated probability scaling: P(attempt) = 75 / def.chance
-						local scaled_chance = math_max(1, math_floor((def.chance or 1000) / 75))
-
-						if math_random(1, scaled_chance) == 1 then
-							if conditions.check(scratch_spawn_pos, def, false) then
-								spawn_mob_group({
-									x = scratch_spawn_pos.x,
-									y = scratch_spawn_pos.y,
-									z = scratch_spawn_pos.z,
-								}, def, "Trickle Spawning")
-								break -- Succeeded for this player this cycle
-							end
+					if math_random(1, scaled_chance) == 1 then
+						if conditions.check(scratch_spawn_pos, def, false) then
+							spawn_mob_group({
+								x = scratch_spawn_pos.x,
+								y = scratch_spawn_pos.y,
+								z = scratch_spawn_pos.z,
+							}, def, "Trickle Spawning")
+							break -- Succeeded for this player this cycle
 						end
 					end
 				end

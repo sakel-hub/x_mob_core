@@ -6,6 +6,9 @@
 ---@class SpawningConditions
 local conditions = {}
 
+local modpath = core.get_modpath("x_mob_core") or "."
+local utils = dofile(modpath .. "/core/utils.lua")
+
 local SPAWN_MAX_DIST = 45
 conditions.MAX_TOTAL_RADIUS_MOBS = 8
 
@@ -57,8 +60,9 @@ conditions.count_mobs_in_radius = count_mobs_in_radius
 ---@param pos Vector Proposed spawn world position
 ---@param def SpawnDefinition|SpawnConfig Spawn definition table
 ---@param is_mapgen? boolean Whether check is performed during mapgen chunk generation
+---@param skip_density? boolean If true, skips radius entity density counting (used for companion scatter)
 ---@return boolean is_valid
-function conditions.check(pos, def, is_mapgen)
+function conditions.check(pos, def, is_mapgen, skip_density)
 	-- Verify time of day limits (ultra-fast scalar check before spatial queries)
 	if not is_mapgen then
 		local tod = core.get_timeofday()
@@ -111,9 +115,15 @@ function conditions.check(pos, def, is_mapgen)
 	-- Validate surface ground node or group filter using pre-parsed O(1) sets
 	local node_below = core.get_node({x = pos.x, y = pos.y - 1, z = pos.z})
 	local node_at = core.get_node(pos)
+	if not node_below or not node_at or node_below.name == "ignore" or node_at.name == "ignore" then
+		return false
+	end
 
 	local def_below = core.registered_nodes[node_below.name]
 	local def_at = core.registered_nodes[node_at.name]
+	if not def_below or not def_at then
+		return false
+	end
 
 	-- Differentiate aquatic vs non-aquatic mob spawn placement
 	local mdef = x_mob_core and x_mob_core.registered_mobs and x_mob_core.registered_mobs[def.mob_name]
@@ -123,7 +133,10 @@ function conditions.check(pos, def, is_mapgen)
 	end
 
 	if not is_aquatic then
-		-- Non-aquatic mobs cannot spawn submerged in liquid or standing on liquid surfaces
+		-- Non-aquatic mobs cannot spawn submerged in liquid, standing on liquid surfaces, or without walkable ground
+		if not def_below.walkable then
+			return false
+		end
 		if def_at and def_at.liquidtype and def_at.liquidtype ~= "none" then
 			return false
 		end
@@ -193,14 +206,25 @@ function conditions.check(pos, def, is_mapgen)
 		return false
 	end
 
+	-- Validate volumetric headroom, wide collisionbox footprint, and anti-sealed-pocket clearance
+	local check_vol_pos = pos
+	if is_aquatic and not (def_at.liquidtype and def_at.liquidtype ~= "none") then
+		check_vol_pos = {x = pos.x, y = pos.y - 1, z = pos.z}
+	end
+	if not utils.has_spawn_clearance(check_vol_pos, mdef, is_aquatic) then
+		return false
+	end
+
 	-- Enforce active entity density limits around proposed position:
 	-- 1. Specific mob active_object_count limit
 	-- 2. Total combined living mob density cap within radius
-	local max_count = def.active_object_count or 1
-	local max_total = def.max_total_in_radius or conditions.MAX_TOTAL_RADIUS_MOBS
-	local count, total_mobs = count_mobs_in_radius(pos, SPAWN_MAX_DIST, def.mob_name)
-	if total_mobs >= max_total or count >= max_count then
-		return false
+	if not skip_density then
+		local max_count = def.active_object_count or 1
+		local max_total = def.max_total_in_radius or conditions.MAX_TOTAL_RADIUS_MOBS
+		local count, total_mobs = count_mobs_in_radius(pos, SPAWN_MAX_DIST, def.mob_name)
+		if total_mobs >= max_total or count >= max_count then
+			return false
+		end
 	end
 
 	return true

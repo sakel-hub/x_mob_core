@@ -270,7 +270,10 @@ end
 ---@param staticdata? string Optional serialized staticdata
 ---@return ObjectRef|nil obj Spawned entity ObjectRef or nil on failure
 function x_mob_core.spawn_mob(pos, mob_name, staticdata)
-	local obj = core.add_entity(pos, mob_name, staticdata)
+	local mdef = x_mob_core.registered_mobs and x_mob_core.registered_mobs[mob_name]
+	local y_off = x_mob_core.utils.get_spawn_y_offset(mdef)
+	local entity_pos = (y_off > 0) and {x = pos.x, y = pos.y + y_off, z = pos.z} or pos
+	local obj = core.add_entity(entity_pos, mob_name, staticdata)
 	if obj then
 		core.log("action", string.format("[x_mob_core] [Manual Spawning] Spawned 1 %s at %s",
 			mob_name, core.pos_to_string(vector.round(pos))))

@@ -310,7 +310,8 @@ function squad.spawn_initial_followers(self, follower_type, max_count, spawn_rad
 			end
 			last_spawn_type = spawn_type
 
-			local m_obj = core.add_entity(scratch_pos, spawn_type, static)
+			local safe_pos = utils.avoid_solid_nodes(scratch_pos, pos)
+			local m_obj = core.add_entity(safe_pos, spawn_type, static)
 			if m_obj and m_obj:is_valid() then
 				squad.add_follower(self, m_obj)
 				spawned_count = spawned_count + 1

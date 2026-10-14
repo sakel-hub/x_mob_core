@@ -77,6 +77,7 @@ end
 ---@param z? number Z coordinate
 ---@return boolean is_walkable
 function utils.is_walkable_node(pos_or_x, y, z)
+	if not core.get_node or not core.registered_nodes then return false end
 	if type(pos_or_x) == "table" then
 		scratch_water_probe.x = math.floor(pos_or_x.x + 0.5)
 		scratch_water_probe.y = math.floor(pos_or_x.y + 0.5)
@@ -87,8 +88,39 @@ function utils.is_walkable_node(pos_or_x, y, z)
 		scratch_water_probe.z = math.floor(z + 0.5)
 	end
 	local node = core.get_node(scratch_water_probe)
+	if not node or node.name == "ignore" then return false end
 	local ndef = core.registered_nodes[node.name]
 	return (ndef and ndef.walkable) or false
+end
+
+--- Checks if a world position or coordinate represents a loaded, non-walkable passable node.
+---@param pos_or_x Vector|number World position table or X coordinate
+---@param y? number Y coordinate
+---@param z? number Z coordinate
+---@param allow_liquid? boolean If true, liquid nodes are treated as passable
+---@return boolean is_passable
+function utils.is_passable_node(pos_or_x, y, z, allow_liquid)
+	if not core.get_node or not core.registered_nodes then return true end
+	local check_liq = allow_liquid
+	if type(pos_or_x) == "table" then
+		scratch_water_probe.x = math.floor(pos_or_x.x + 0.5)
+		scratch_water_probe.y = math.floor(pos_or_x.y + 0.5)
+		scratch_water_probe.z = math.floor(pos_or_x.z + 0.5)
+		check_liq = y
+	else
+		scratch_water_probe.x = math.floor(pos_or_x + 0.5)
+		scratch_water_probe.y = math.floor(y + 0.5)
+		scratch_water_probe.z = math.floor(z + 0.5)
+	end
+	local node = core.get_node(scratch_water_probe)
+	if not node or node.name == "ignore" then return false end
+	if node.name == "air" then return true end
+	local ndef = core.registered_nodes[node.name]
+	if not ndef or ndef.walkable then return false end
+	if not check_liq and ndef.liquidtype and ndef.liquidtype ~= "none" then
+		return false
+	end
+	return true
 end
 
 --- Determines safe submerged vertical range for an entity in the water column.
@@ -201,6 +233,7 @@ end
 ---@param allow_liquid? boolean If true, liquid surface is also accepted as ground level
 ---@return number|nil ground_y Top surface height of highest ground node, or nil
 function utils.get_ground_y(pos, max_down, max_up, walkable_only, allow_liquid)
+	if not core.get_node_or_nil or not core.registered_nodes then return nil end
 	local nx = math.floor(pos.x + 0.5)
 	local ny = math.floor(pos.y + 0.5)
 	local nz = math.floor(pos.z + 0.5)
@@ -215,14 +248,17 @@ function utils.get_ground_y(pos, max_down, max_up, walkable_only, allow_liquid)
 				if allow_liquid and def.liquidtype and def.liquidtype ~= "none" then
 					local above = core.get_node_or_nil({x = nx, y = cy + 1, z = nz})
 					local above_def = above and core.registered_nodes[above.name]
-					if not above_def or (not above_def.walkable and (not above_def.liquidtype or above_def.liquidtype == "none")) then
+					if above and above.name ~= "ignore" and
+						(not above_def or (not above_def.walkable and (not above_def.liquidtype or above_def.liquidtype == "none"))) then
 						return cy + 0.5
 					end
 				elseif walkable_only ~= false then
 					if def.walkable and (not def.liquidtype or def.liquidtype == "none") then
 						local above = core.get_node_or_nil({x = nx, y = cy + 1, z = nz})
 						local above_def = above and core.registered_nodes[above.name]
-						if not above_def or not above_def.walkable then
+						local above_liq = above_def and above_def.liquidtype and above_def.liquidtype ~= "none"
+						if above and above.name ~= "ignore" and
+							(not above_def or (not above_def.walkable and (allow_liquid or not above_liq))) then
 							return cy + 0.5
 						end
 					end
@@ -283,6 +319,7 @@ local avoid_probe = {x = 0, y = 0, z = 0}
 ---@return number headroom Distance to first walkable ceiling node, or max_check if open sky
 function utils.get_headroom(origin, max_check)
 	local max_h = max_check or 4.0
+	if not core.get_node_or_nil or not core.registered_nodes then return max_h end
 	headroom_probe.x = math.floor(origin.x + 0.5)
 	headroom_probe.z = math.floor(origin.z + 0.5)
 	local base_y = math.floor(origin.y + 0.5)
@@ -304,6 +341,9 @@ end
 ---@param look_dir? Vector Optional directional vector to tuck behind if in tight enclosure
 ---@return Vector clear_pos Adjusted safe 3D coordinate
 function utils.avoid_solid_nodes(target_pos, safe_origin, look_dir)
+	if not core.get_node_or_nil or not core.registered_nodes then
+		return target_pos
+	end
 	avoid_probe.x = math.floor(target_pos.x + 0.5)
 	avoid_probe.y = math.floor(target_pos.y + 0.5)
 	avoid_probe.z = math.floor(target_pos.z + 0.5)
@@ -365,6 +405,124 @@ function utils.avoid_solid_nodes(target_pos, safe_origin, look_dir)
 		return {x = safe_origin.x, y = safe_y, z = safe_origin.z}
 	end
 	return target_pos
+end
+
+--- Computes the vertical elevation offset required above an integer spawn coordinate
+--- so that an entity's collisionbox bottom (ymin) does not start embedded inside the floor block.
+---@param mdef_or_cbox? table Mob registration definition or collisionbox array
+---@return number y_offset Non-negative vertical spawn offset
+function utils.get_spawn_y_offset(mdef_or_cbox)
+	if type(mdef_or_cbox) ~= "table" then return 0 end
+	local cbox = mdef_or_cbox.collisionbox or
+		(mdef_or_cbox.initial_properties and mdef_or_cbox.initial_properties.collisionbox) or
+		(type(mdef_or_cbox[2]) == "number" and mdef_or_cbox) or nil
+	local ymin = cbox and cbox[2] or 0
+	if ymin < -0.48 then
+		return (-ymin - 0.48)
+	end
+	return 0
+end
+
+local clearance_cardinals = {
+	{1, 0},
+	{-1, 0},
+	{0, 1},
+	{0, -1},
+}
+
+--- Validates that a proposed spawn coordinate has sufficient vertical headroom,
+--- horizontal footprint clearance for wide collision boxes, and is not inside an
+--- isolated 1x1x1 sealed pocket in solid terrain.
+---@param pos Vector Proposed integer spawn coordinate (above ground node at pos.y - 1)
+---@param mdef? table Registered mob definition table
+---@param is_aquatic? boolean Whether the mob is aquatic
+---@return boolean is_clear
+function utils.has_spawn_clearance(pos, mdef, is_aquatic)
+	if not core.get_node or not core.registered_nodes then return true end
+	local px = math.floor(pos.x + 0.5)
+	local py = math.floor(pos.y + 0.5)
+	local pz = math.floor(pos.z + 0.5)
+
+	local cbox = mdef and (mdef.collisionbox or (mdef.initial_properties and mdef.initial_properties.collisionbox))
+	local mob_height = (mdef and mdef.mob_height) or (cbox and ((cbox[5] or 0.5) - (cbox[2] or 0))) or 1.5
+	local half_width = (mdef and mdef.half_width) or
+		(cbox and math.max(-(cbox[1] or -0.4), cbox[4] or 0.4, -(cbox[3] or -0.4), cbox[6] or 0.4)) or 0.4
+
+	-- Require at least 2 vertical nodes of clearance for terrestrial mobs so entities
+	-- never spawn inside 1-block-high horizontal cracks or 1x1x1 sealed pockets.
+	local req_v_nodes = is_aquatic and math.max(1, math.ceil(mob_height - 0.05)) or
+		math.max(2, math.ceil(mob_height - 0.05))
+
+	for dy = 0, req_v_nodes - 1 do
+		if not utils.is_passable_node(px, py + dy, pz, is_aquatic) then
+			return false
+		end
+	end
+
+	-- Check 4 cardinal horizontal neighbors at base spawn elevation:
+	-- 1. Wide mobs (half_width > 0.48) extend beyond a 1x1 voxel, so all 4 neighbors must be non-walkable.
+	-- 2. All mobs require at least 2 open cardinal neighbors to reject 1x1 vertical shafts / pockets.
+	local open_neighbors = 0
+	for i = 1, 4 do
+		local c = clearance_cardinals[i]
+		if utils.is_passable_node(px + c[1], py, pz + c[2], true) then
+			open_neighbors = open_neighbors + 1
+		end
+	end
+
+	if half_width > 0.48 then
+		if open_neighbors < 4 then
+			return false
+		end
+	elseif open_neighbors < 2 then
+		return false
+	end
+
+	return true
+end
+
+--- Finds an adjacent passable position to depenetrate an entity embedded inside a solid block.
+--- Prefers upward (+Y) recovery first, then cardinal horizontal offsets.
+---@param pos Vector Current entity world position
+---@param cbox? number[] Entity collisionbox array
+---@return Vector|nil free_pos Safe depenetrated world coordinate or nil if completely entombed
+function utils.find_depenetration_pos(pos, cbox)
+	if not pos or not core.get_node or not core.registered_nodes then return nil end
+	local px = math.floor(pos.x + 0.5)
+	local py = math.floor(pos.y + 0.5)
+	local pz = math.floor(pos.z + 0.5)
+	local ymin = (cbox and cbox[2]) or 0
+	local floor_offset = math.max(0, -ymin - 0.48)
+
+	-- 1. Try popping straight up onto the top surface of the embedding block (+1 or +2 Y)
+	for dy = 1, 2 do
+		if utils.is_passable_node(px, py + dy, pz, false) then
+			return {
+				x = pos.x,
+				y = (py + dy - 0.5) + math.max(0.02, -ymin + 0.02),
+				z = pos.z,
+			}
+		end
+	end
+
+	-- 2. Try cardinal horizontal neighbors at current or +1 elevation
+	for dy = 0, 1 do
+		for i = 1, 4 do
+			local c = clearance_cardinals[i]
+			local nx = px + c[1]
+			local ny = py + dy
+			local nz = pz + c[2]
+			if utils.is_passable_node(nx, ny, nz, false) then
+				return {
+					x = nx,
+					y = ny + floor_offset,
+					z = nz,
+				}
+			end
+		end
+	end
+
+	return nil
 end
 
 --- Finds the top surface Y coordinate of the solid walkable ground below a given 3D position
