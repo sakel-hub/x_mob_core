@@ -152,15 +152,40 @@ function environment.step(self, dtime, def, combat_handler)
 
 	-- 3. Suffocation in solid walkable blocks (buried alive in stone/sand/gravel)
 	scratch_probe.x = math.floor(pos.x + 0.5)
-	scratch_probe.y = math.floor(head_y + 0.5)
 	scratch_probe.z = math.floor(pos.z + 0.5)
-	local head_node = core.get_node(scratch_probe)
-	local head_def = core.registered_nodes[head_node.name]
-	if head_def and head_def.walkable and head_def.drawtype == "normal" and
-		not immunities.suffocation then
-		local suffocation_rate = def.block_suffocation_dps or 2
-		total_dmg = total_dmg + math.max(1, math.floor(suffocation_rate * elapsed + 0.5))
-		hazard_type = hazard_type or "suffocation"
+
+	local is_buried = false
+	local bury_checks = { head_y, torso_y }
+	for i = 1, #bury_checks do
+		scratch_probe.y = math.floor(bury_checks[i] + 0.5)
+		local b_node = core.get_node(scratch_probe)
+		local b_def = b_node and b_node.name ~= "ignore" and core.registered_nodes[b_node.name]
+		if b_def and b_def.walkable and (not b_def.drawtype or b_def.drawtype == "normal") then
+			is_buried = true
+			break
+		end
+	end
+
+	if is_buried then
+		-- Attempt to depenetrate out of the solid node if adjacent open air exists
+		local free_pos = utils.find_depenetration_pos(pos, cbox)
+		if free_pos and self.object and self.object.set_pos then
+			self.object:set_pos(free_pos)
+			if self.on_wall_or_ceiling and x_mob_core and x_mob_core.motor and
+				x_mob_core.motor.surface and x_mob_core.motor.surface.set_crawler_state then
+				x_mob_core.motor.surface.set_crawler_state(self, false, {x = 0, y = 1, z = 0}, free_pos)
+			end
+			self._is_suffocating = false
+		else
+			self._is_suffocating = true
+			if not immunities.suffocation then
+				local suffocation_rate = def.block_suffocation_dps or 2
+				total_dmg = total_dmg + math.max(1, math.floor(suffocation_rate * elapsed + 0.5))
+				hazard_type = hazard_type or "suffocation"
+			end
+		end
+	else
+		self._is_suffocating = false
 	end
 
 	-- Apply accumulated environmental damage
