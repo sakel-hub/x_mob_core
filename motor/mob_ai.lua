@@ -256,6 +256,19 @@ function mob_ai.update_navigation(self, dtime)
 		end
 	end
 
+	-- Root / Immobilization check (e.g. bone_shackles, freeze, roots, crystal)
+	if self.object and x_mob_core.is_rooted and x_mob_core.is_rooted(self.object) then
+		locomotion.halt_horizontal_velocity(self)
+		if not self._nav_result then
+			self._nav_result = {moving = false, speed = 0, has_los = false}
+		else
+			self._nav_result.moving = false
+			self._nav_result.speed = 0
+			self._nav_result.has_los = false
+		end
+		return self._nav_result
+	end
+
 	-- Fleeing state check (low HP retreat away from danger)
 	if self.state == "fleeing" or self.state == "flee" then
 		return handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceiling)
@@ -452,7 +465,7 @@ function mob_ai.update_navigation(self, dtime)
 			self.path_state.waypoints = nil
 			self.path_state.index = 1
 
-			local speed = self.pursuit_speed or 4.0
+			local speed = locomotion.get_effective_speed(self, self.pursuit_speed or 4.0)
 			local in_melee_contact = (dist <= attack_rng * 0.75)
 
 			if self.is_floating then
@@ -652,7 +665,10 @@ function mob_ai.update_navigation(self, dtime)
 				yaw = away_yaw,
 				origin = {x = current_pos.x, y = current_pos.y, z = current_pos.z},
 			}
-			local w_speed = self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
+			local w_speed = locomotion.get_effective_speed(
+				self,
+				self.wander_speed or (self.walk_speed and self.walk_speed * 0.6) or 1.8
+			)
 			local cur_vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 			self.object:set_velocity({
 				x = away_dir.x * w_speed,
@@ -688,7 +704,7 @@ function mob_ai.update_navigation(self, dtime)
 				}
 			end
 			local move_vec = vector.direction(current_pos, pursuit_dest)
-			local speed = (self.pursuit_speed or 4.0) * 0.75
+			local speed = locomotion.get_effective_speed(self, (self.pursuit_speed or 4.0) * 0.75)
 			local target_above = (target_pos.y - current_pos.y) > 2.5
 			local flat_dist = h_dist
 

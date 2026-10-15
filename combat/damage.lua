@@ -56,11 +56,20 @@ function damage.calculate_punch_damage(self, puncher, time_from_last_punch, tool
 		dmg = damage_override
 	end
 
-	-- Apply incoming status effect damage multiplier (e.g. brittle / crystallize)
+	-- Apply incoming status effect damage multiplier on target mob (e.g. brittle / crystallize / carapace)
 	if self.object then
 		local eff_mult = x_mob_core.get_damage_multiplier(self.object)
 		if eff_mult and eff_mult > 0 and eff_mult ~= 1.0 then
 			dmg = dmg * eff_mult
+		end
+	end
+
+	-- Apply outgoing status effect attack multiplier for player attackers (e.g. solar_surge / frenzy)
+	if puncher and puncher:is_valid() and puncher.is_player
+			and puncher:is_player() and x_mob_core.get_attack_multiplier then
+		local att_mult = x_mob_core.get_attack_multiplier(puncher)
+		if att_mult and att_mult > 0 and att_mult ~= 1.0 then
+			dmg = dmg * att_mult
 		end
 	end
 
@@ -70,7 +79,7 @@ function damage.calculate_punch_damage(self, puncher, time_from_last_punch, tool
 	end
 
 	-- Apply wear to attacker's weapon like vanilla Luanti
-	if puncher and puncher:is_valid() and puncher:is_player() then
+	if puncher and puncher:is_valid() and puncher:is_player() and puncher.get_wielded_item then
 		local tool = puncher:get_wielded_item()
 		if tool and not tool:is_empty() and not core.is_creative_enabled(puncher:get_player_name()) then
 			local wear = math.floor((fpi / 75) * 9000)

@@ -387,6 +387,96 @@ assert_eq(
 	"Preset merge updated envelop_texture to 3rd-party texture"
 )
 
+-- Test 12: String Preset Name in apply_status_effect, Player Poise & Player Outgoing Attack Multiplier
+local string_preset_obj = create_mock_object({hp_max = 50}, false, "test:string_preset_mob")
+string_preset_obj._luaentity = { object = string_preset_obj, name = "test:string_preset_mob" }
+local applied_str = x_mob_core.apply_status_effect(string_preset_obj, "frenzy")
+assert_true(applied_str ~= false, "apply_status_effect accepts string preset name directly")
+assert_true(
+	x_mob_core.has_status_effect(string_preset_obj, "frenzy"),
+	"Target has active frenzy effect from string preset"
+)
+
+local poise_player = create_mock_object({hp_max = 20}, true, "poise_hero")
+x_mob_core.apply_buff(poise_player, "carapace")
+local kb_reduced = core.calculate_knockback(poise_player, nil, 1.0, {}, {x = 1, y = 0, z = 0}, 2.0, 10)
+assert_near(kb_reduced, 2.5, 0.01, "Carapace (75% poise) reduces player knockback from 10 to 2.5")
+
+local surge_player = create_mock_object({hp_max = 20}, true, "surge_hero")
+x_mob_core.apply_buff(surge_player, "solar_surge")
+local victim_mob_obj = create_mock_object({hp_max = 50}, false, "test:victim_mob")
+victim_mob_obj:set_armor_groups({ fleshy = 100 })
+local victim_mob_ent = { object = victim_mob_obj, name = "test:victim_mob", armor_groups = { fleshy = 100 } }
+victim_mob_obj._luaentity = victim_mob_ent
+rawset(core, "hash_node_position", core.hash_node_position or function(pos)
+	return string.format("%d,%d,%d", pos.x or 0, pos.y or 0, pos.z or 0)
+end)
+rawset(core, "get_node_or_nil", core.get_node_or_nil or function()
+	return { name = "air" }
+end)
+rawset(core, "registered_nodes", core.registered_nodes or {})
+local surge_dmg = x_mob_core.combat.damage.calculate_punch_damage(
+	victim_mob_ent,
+	surge_player,
+	1.0,
+	{ full_punch_interval = 1.0, damage_groups = { fleshy = 10 } },
+	{ x = 1, y = 0, z = 0 },
+	nil
+)
+assert_eq(surge_dmg, 13, "Solar Surge (+30% attack) scales player punch damage against mob from 10 to 13")
+
+-- Test 13: Regression Tests (Cleanse on Apply Buff, DoT Secondary Punch, Anti-Heal on HoT, Root Speed 0.0)
+local cleanse_player = create_mock_object({hp_max = 20}, true, "cleanse_hero")
+x_mob_core.apply_status_effect(cleanse_player, "bleed")
+assert_true(x_mob_core.has_status_effect(cleanse_player, "bleed"), "Player has bleed debuff before rejuvenation")
+-- Applying rejuvenation (cleanse_debuffs = true) when only debuffs are active must not nil-index active_effects[key]
+local rejuv_ok = x_mob_core.apply_buff(cleanse_player, "rejuvenation", { cleanse_debuffs = true })
+assert_true(rejuv_ok ~= false, "Applying rejuvenation when only debuffs are active succeeds without crash")
+assert_true(not x_mob_core.has_status_effect(cleanse_player, "bleed"), "Bleed debuff cleansed by rejuvenation")
+assert_true(
+	x_mob_core.has_status_effect(cleanse_player, "rejuvenation"),
+	"Rejuvenation buff active after cleansing sole debuff"
+)
+
+-- Verify DoT tick sets is_secondary_punch() == true during target:punch
+local dot_victim = create_mock_object({hp_max = 20}, true, "dot_victim")
+local observed_secondary = nil
+local orig_punch = dot_victim.punch
+function dot_victim:punch(puncher, tflp, caps, dir)
+	observed_secondary = x_mob_core.is_secondary_punch()
+	return orig_punch(self, puncher, tflp, caps, dir)
+end
+x_mob_core.apply_status_effect(dot_victim, {
+	id = "test_dot",
+	type = "dot",
+	damage = 2,
+	interval = 1.0,
+	duration = 2.0,
+})
+advance_time(1.0)
+assert_eq(observed_secondary, true, "DoT tick punch marks is_secondary_punch() == true")
+assert_eq(x_mob_core.is_secondary_punch(), false, "is_secondary_punch() resets to false after DoT tick punch")
+
+-- Verify anti_heal suppresses HoT tick healing
+local cursed_target = create_mock_object({hp_max = 20}, false, "test:cursed_mob")
+cursed_target:set_hp(10)
+x_mob_core.apply_buff(cursed_target, "rejuvenation", {
+	duration = 3.0,
+	heal = 4,
+	interval = 1.0,
+	cleanse_debuffs = false,
+})
+x_mob_core.apply_status_effect(cursed_target, "curse")
+assert_true(x_mob_core.has_anti_heal(cursed_target), "Cursed target has anti_heal active")
+advance_time(1.0)
+assert_eq(cursed_target:get_hp(), 10, "HoT tick does not heal while anti_heal (curse) is active")
+
+-- Verify root status effect forces get_speed_multiplier to 0.0
+local rooted_mob = create_mock_object({hp_max = 20}, false, "test:rooted_mob")
+x_mob_core.apply_status_effect(rooted_mob, "bone_shackles")
+assert_true(x_mob_core.is_rooted(rooted_mob), "Mob is rooted by bone_shackles")
+assert_near(x_mob_core.get_speed_multiplier(rooted_mob), 0.0, 0.001, "Rooted mob speed multiplier is 0.0")
+
 print("==================================================")
 print(string.format("  Buffs Test Summary: %d / %d Passed", tests_passed, tests_run))
 print("==================================================")

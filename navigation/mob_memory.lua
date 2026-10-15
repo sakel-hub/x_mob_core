@@ -682,8 +682,11 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 	local is_running_away = mem.flee_state or (self.state == "fleeing" or self.state == "flee") or
 		(self.panic_timer and self.panic_timer > 0)
 	local is_unlimited = not hr or (hr.unlimited_flee ~= false)
-	local should_regen = (rate > 0) and not self._is_suffocating and ((is_unlimited and is_running_away) or passive)
-	if should_regen and cur_hp < max_hp and cur_hp > 0 then
+	local eligible = (rate > 0) and (cur_hp < max_hp) and (cur_hp > 0) and not self._is_suffocating
+		and ((is_unlimited and is_running_away) or passive)
+	local anti_heal = eligible and self.object and x_mob_core.has_anti_heal
+		and x_mob_core.has_anti_heal(self.object)
+	if eligible and not anti_heal then
 		mem.regen_timer = mem.regen_timer + dtime
 		if mem.regen_timer >= 1.0 then
 			local hp_to_add = math.floor(mem.regen_timer * rate)

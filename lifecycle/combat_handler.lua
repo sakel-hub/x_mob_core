@@ -19,6 +19,9 @@ local coordination = dofile(modpath .. "/pack/coordination.lua")
 local utils = dofile(modpath .. "/core/utils.lua")
 local health_bar = dofile(modpath .. "/combat/health_bar.lua")
 
+--- Static zero vector to avoid table allocations in hot punch/tick paths
+local ZERO_VECTOR = { x = 0, y = 0, z = 0 }
+
 ---Applies death settling physics, anchoring the dying entity to walkable ground without vibration.
 ---@param self table Entity instance
 function combat_handler.apply_death_settling_physics(self)
@@ -138,6 +141,12 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 	local dmg = damage_calculator.calculate_punch_damage(
 		self, puncher, time_from_last_punch, tool_capabilities, dir, damage
 	)
+	if self.object and x_mob_core.check_crystallize_shatter then
+		local shatter_bonus = x_mob_core.check_crystallize_shatter(self.object, puncher, tool_capabilities, dmg)
+		if shatter_bonus and shatter_bonus > 0 then
+			dmg = dmg + shatter_bonus
+		end
+	end
 	local hp_max = self.hp_max or def._hp_max or 20
 	self.hp = (self.hp or hp_max) - dmg
 	if self.hp < 0 then self.hp = 0 end
@@ -226,18 +235,21 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 		self._knockback_timer = 0.4
 	end
 
-	-- Check reactive thorns on struck mob
-	if puncher and puncher:is_valid() and self.object then
+	-- Check reactive thorns on struck mob (skip on synthetic secondary punches to prevent ping-pong loops)
+	local is_secondary = x_mob_core.is_secondary_punch and x_mob_core.is_secondary_punch()
+	if not is_secondary and puncher and puncher:is_valid() and puncher ~= self.object and self.object then
 		local thorns = x_mob_core.get_thorns(self.object)
 		if thorns and (thorns.damage or 0) > 0 then
 			local chance = thorns.chance or 1.0
 			if chance >= 1.0 or math.random() <= chance then
 				local tdmg = thorns.damage
 				local ttype = thorns.damage_type or "fleshy"
+				if x_mob_core.push_secondary_punch then x_mob_core.push_secondary_punch() end
 				puncher:punch(self.object, 1.0, {
 					full_punch_interval = 1.0,
 					damage_groups = { [ttype] = tdmg },
-				}, { x = 0, y = 0, z = 0 })
+				}, ZERO_VECTOR)
+				if x_mob_core.pop_secondary_punch then x_mob_core.pop_secondary_punch() end
 			end
 		end
 	end

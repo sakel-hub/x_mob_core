@@ -43,6 +43,22 @@ local player_fov_modifiers = {}
 --- Key: player_name string -> boolean
 local rooted_players = {}
 
+--- Static zero vector to avoid table allocations in hot punch/tick paths
+local ZERO_VECTOR = { x = 0, y = 0, z = 0 }
+
+--- Memoized indicate_regen function lookup
+local cached_indicate_regen = nil
+local function get_indicate_regen()
+	if cached_indicate_regen ~= nil then
+		return cached_indicate_regen
+	end
+	cached_indicate_regen = x_mob_core.indicate_regen
+		or (x_mob_core.effects and x_mob_core.effects.indicate_regen)
+		or (x_mob_core.combat and x_mob_core.combat.effects and x_mob_core.combat.effects.indicate_regen)
+		or false
+	return cached_indicate_regen
+end
+
 -- ============================================================================
 -- 1. TARGET KEY RESOLUTION
 -- ============================================================================
@@ -681,9 +697,14 @@ local function schedule_dot_tick(
 			local pos = target:get_pos()
 			if pos then
 				local node = core.get_node(pos)
-				local node_below = core.get_node({x = pos.x, y = pos.y - 0.5, z = pos.z})
-				if (node and core.get_item_group(node.name, "water") > 0) or
-				   (node_below and core.get_item_group(node_below.name, "water") > 0) then
+				local in_water = (node and core.get_item_group(node.name, "water") > 0)
+				if not in_water then
+					pos.y = pos.y - 0.5
+					local node_below = core.get_node(pos)
+					pos.y = pos.y + 0.5
+					in_water = (node_below and core.get_item_group(node_below.name, "water") > 0)
+				end
+				if in_water then
 					core.sound_play("default_cool_lava", {pos = pos, gain = 0.5, max_hear_distance = 16}, true)
 					core.add_particlespawner({
 						amount = 8,
@@ -724,15 +745,30 @@ local function schedule_dot_tick(
 			end
 		end
 
-		-- Restore health on tick if configured (HoT)
-		if heal and heal > 0 and target:is_valid() then
-			local cur_hp = target.get_hp and target:get_hp() or 0
-			local props = target.get_properties and target:get_properties() or {}
-			local max_hp = props.hp_max or 20
+		-- Restore health on tick if configured (HoT), unless suppressed by anti_heal
+		if heal and heal > 0 and target:is_valid() and not status_effects.has_anti_heal(target) then
+			local is_plr = target.is_player and target:is_player()
+			local ent = (not is_plr and target.get_luaentity) and target:get_luaentity() or nil
+			local cur_hp = (ent and ent.hp) or (target.get_hp and target:get_hp()) or 0
+			local max_hp = ent and (ent.hp_max or (ent._def and ent._def.hp_max))
+			if not max_hp then
+				local props = target.get_properties and target:get_properties()
+				max_hp = (props and props.hp_max) or 20
+			end
 			if cur_hp > 0 and cur_hp < max_hp then
 				local new_hp = math.min(max_hp, cur_hp + heal)
+				if ent and ent.hp ~= nil then
+					ent.hp = new_hp
+				end
 				target:set_hp(new_hp)
-				x_mob_core.effects.indicate_regen(target)
+				if ent and x_mob_core.combat and x_mob_core.combat.health_bar
+						and x_mob_core.combat.health_bar.on_hp_change then
+					x_mob_core.combat.health_bar.on_hp_change(ent, cur_hp, new_hp, ent._def)
+				end
+				local ind_fn = get_indicate_regen()
+				if ind_fn then
+					ind_fn(target)
+				end
 			end
 		end
 
@@ -751,10 +787,16 @@ local function schedule_dot_tick(
 					modified_armor = true
 				end
 
-				target:punch(punch_source, 1.0, {
-					full_punch_interval = 1.0,
-					damage_groups = { [damage_type] = damage },
-				}, { x = 0, y = 0, z = 0 })
+				if not record._punch_caps then
+					record._punch_caps = {
+						full_punch_interval = 1.0,
+						damage_groups = { [damage_type] = damage },
+					}
+				end
+
+				status_effects.push_secondary_punch()
+				target:punch(punch_source, 1.0, record._punch_caps, ZERO_VECTOR)
+				status_effects.pop_secondary_punch()
 
 				if modified_armor and target:is_valid() then
 					target:set_armor_groups(old_groups)
@@ -809,10 +851,11 @@ end
 ---@return ObjectRef|boolean result Envelop object if envelop attached, or true on success
 function status_effects.apply_effect(target, effect_def)
 	if not target or not target:is_valid() then return false end
-	local eff_id = effect_def and (effect_def.id or effect_def.name)
-	if not eff_id or eff_id == "" then return false end
+	if type(effect_def) ~= "string" and type(effect_def) ~= "table" then return false end
 
 	local norm = normalize_effect_def(effect_def)
+	local eff_id = norm and norm.id
+	if not eff_id or eff_id == "" then return false end
 	if norm.chance ~= nil then
 		local prob = (norm.chance > 1.0) and (norm.chance / 100.0) or norm.chance
 		if prob < 1.0 and (prob <= 0.0 or math.random() > prob) then
@@ -822,15 +865,6 @@ function status_effects.apply_effect(target, effect_def)
 
 	local key = get_target_key(target)
 	if not key then return false end
-
-	if not active_effects[key] then
-		active_effects[key] = {}
-	end
-
-	-- Purge negative debuffs if cleanse_debuffs requested
-	if norm.cleanse_debuffs then
-		status_effects.cleanse_debuffs(target)
-	end
 
 	local token = x_mob_core.generate_uuid()
 	local is_player = target:is_player()
@@ -850,6 +884,17 @@ function status_effects.apply_effect(target, effect_def)
 				return false
 			end
 		end
+	end
+
+	-- Purge negative debuffs if cleanse_debuffs requested
+	-- Note: cleanse_debuffs may nil out active_effects[key] if the last active effect was a debuff,
+	-- so active_effects[key] must be initialized/ensured after cleansing.
+	if norm.cleanse_debuffs then
+		status_effects.cleanse_debuffs(target)
+	end
+
+	if not active_effects[key] then
+		active_effects[key] = {}
 	end
 
 	-- Clean up previous spawner if refreshing an existing effect
@@ -1002,10 +1047,10 @@ function status_effects.apply_effect(target, effect_def)
 		 norm.on_tick_particles ~= nil)
 
 	-- Always schedule an authoritative failsafe expiration timer via core.after.
-	-- For ticking effects, an extra 0.2s grace period allows the final periodic tick to resolve.
+	-- For ticking effects, an extra 0.05s grace period allows the final periodic tick to resolve.
 	-- This guarantees that regardless of periodic ticker errors, pauses, or desyncs,
 	-- the status effect and all associated physics/visual modifiers are strictly expired.
-	local failsafe_duration = has_ticker and (norm.duration + 0.2) or norm.duration
+	local failsafe_duration = has_ticker and (norm.duration + 0.05) or norm.duration
 	core.after(failsafe_duration, function()
 		if not target or not target:is_valid() then return end
 		local k = get_target_key(target)
@@ -1117,6 +1162,21 @@ function status_effects.is_rooted(target)
 	return false
 end
 
+--- Checks if target (player or mob entity) has an active anti-heal status effect
+---@param target ObjectRef Target player or entity
+---@return boolean has_anti_heal True if target has an active anti_heal status effect
+function status_effects.has_anti_heal(target)
+	if not target then return false end
+	local key = get_target_key(target)
+	if not key or not active_effects[key] then return false end
+	for _, rec in pairs(active_effects[key]) do
+		if rec.anti_heal then
+			return true
+		end
+	end
+	return false
+end
+
 --- Retrieves all active status effects for a target
 ---@param target ObjectRef Target player or entity
 ---@return table<string, ActiveEffectRecord>? effects Map of active effects
@@ -1161,14 +1221,16 @@ end
 
 --- Retrieves compound movement speed multiplier across all active status effects for a target
 ---@param target ObjectRef Target player or entity
----@return number multiplier Net speed multiplier (defaults to 1.0)
+---@return number multiplier Net speed multiplier (defaults to 1.0; returns 0.0 when rooted)
 function status_effects.get_speed_multiplier(target)
 	if not target then return 1.0 end
 	local key = get_target_key(target)
 	if not key or not active_effects[key] then return 1.0 end
 	local mult = 1.0
 	for _, rec in pairs(active_effects[key]) do
-		if rec.speed_factor and rec.speed_factor > 0 then
+		if rec.type == "root" or (rec.speed_factor ~= nil and rec.speed_factor <= 0) then
+			return 0.0
+		elseif rec.speed_factor and rec.speed_factor > 0 then
 			mult = mult * rec.speed_factor
 		end
 	end
@@ -1296,78 +1358,153 @@ end
 -- 4. LIFECYCLE & COMBAT INTERACTION LISTENERS
 -- ============================================================================
 
--- Intercept player punches to apply brittle damage amplification and pickaxe shatter
-core.register_on_punchplayer(function(player, hitter, _time_from_last_punch, _tool_capabilities, _dir, damage)
-	if not player or not player:is_valid() then return end
+local secondary_punch_depth = 0
 
-	-- Check pickaxe shatter synergy for crystallize
-	if status_effects.has_effect(player, "crystallize") then
-		local is_pickaxe = false
-		if hitter and hitter:is_valid() and hitter:is_player() then
-			local wielded = hitter:get_wielded_item()
-			if wielded and not wielded:is_empty() then
-				local iname = wielded:get_name()
-				local idef = core.registered_items[iname]
-				local caps = idef and idef.tool_capabilities
-				if (caps and caps.groupcaps and caps.groupcaps.cracky)
-						or (core.get_item_group(iname, "pickaxe") > 0) then
-					is_pickaxe = true
-				end
-			end
-		end
-		if is_pickaxe then
-			status_effects.remove_effect(player, "crystallize")
-			local pos = player:get_pos()
-			if pos then
-				core.sound_play("x_mobs_crystal_guardian_hurt", {
-					pos = pos,
-					gain = 1.0,
-					pitch = 1.4,
-					max_hear_distance = 24.0,
-				}, true)
-				core.add_particlespawner({
-					amount = 24,
-					time = 0.1,
-					pos = {
-						min = {x = pos.x - 0.4, y = pos.y, z = pos.z - 0.4},
-						max = {x = pos.x + 0.4, y = pos.y + 1.2, z = pos.z + 0.4}
-					},
-					vel = {min = {x = -3, y = 1, z = -3}, max = {x = 3, y = 4, z = 3}},
-					texture = "x_mob_core_sparkle.png^[multiply:#55FFFF",
-					glow = 12,
-				})
+--- Returns true if currently executing a synthetic secondary punch (DoT tick, thorns, brittle bonus)
+---@return boolean is_secondary
+function status_effects.is_secondary_punch()
+	return secondary_punch_depth > 0
+end
+
+--- Marks entry into a synthetic secondary punch context
+function status_effects.push_secondary_punch()
+	secondary_punch_depth = secondary_punch_depth + 1
+end
+
+--- Marks exit from a synthetic secondary punch context
+function status_effects.pop_secondary_punch()
+	if secondary_punch_depth > 0 then
+		secondary_punch_depth = secondary_punch_depth - 1
+	end
+end
+
+--- Checks if a target with "crystallize" is struck by a pickaxe, shattering the crystal
+--- and returning bonus shatter damage (works for both player and mob targets).
+---@param target ObjectRef Target player or mob entity
+---@param hitter ObjectRef? Attacker player or entity
+---@param tool_capabilities table? Tool capabilities of the strike
+---@param base_damage number? Base damage of the strike
+---@return number shatter_bonus Bonus shatter damage (> 0 if shattered, 0 otherwise)
+function status_effects.check_crystallize_shatter(target, hitter, tool_capabilities, base_damage)
+	if not target or not target:is_valid() or not status_effects.has_effect(target, "crystallize") then
+		return 0
+	end
+
+	local is_pickaxe = false
+	if tool_capabilities and tool_capabilities.groupcaps and tool_capabilities.groupcaps.cracky then
+		is_pickaxe = true
+	elseif hitter and hitter:is_valid() and hitter:is_player() then
+		local wielded = hitter.get_wielded_item and hitter:get_wielded_item()
+		if wielded and not wielded:is_empty() then
+			local iname = wielded:get_name()
+			local idef = core.registered_items and core.registered_items[iname]
+			local caps = idef and idef.tool_capabilities
+			if (caps and caps.groupcaps and caps.groupcaps.cracky)
+					or (core.get_item_group and core.get_item_group(iname, "pickaxe") > 0) then
+				is_pickaxe = true
 			end
 		end
 	end
 
-	-- Apply incoming status effect damage multiplier (e.g. brittle / crystallize)
-	local mult = status_effects.get_damage_multiplier(player)
-	if mult and mult > 1.0 and damage and damage > 0 then
-		local extra_dmg = math.floor(damage * (mult - 1.0) + 0.5)
-		if extra_dmg > 0 then
-			local cur_hp = player:get_hp()
-			if cur_hp > extra_dmg then
-				player:set_hp(cur_hp - extra_dmg)
-			else
-				player:punch(hitter or player, 1.0, {
-					full_punch_interval = 1.0,
-					damage_groups = { fleshy = extra_dmg },
-				}, { x = 0, y = 0, z = 0 })
-			end
+	if not is_pickaxe then
+		return 0
+	end
+
+	status_effects.remove_effect(target, "crystallize")
+	local pos = target:get_pos()
+	if pos then
+		core.sound_play("x_mobs_crystal_guardian_hurt", {
+			pos = pos,
+			gain = 1.0,
+			pitch = 1.4,
+			max_hear_distance = 24.0,
+		}, true)
+		core.add_particlespawner({
+			amount = 24,
+			time = 0.1,
+			pos = {
+				min = { x = pos.x - 0.4, y = pos.y, z = pos.z - 0.4 },
+				max = { x = pos.x + 0.4, y = pos.y + 1.2, z = pos.z + 0.4 },
+			},
+			vel = { min = { x = -3, y = 1, z = -3 }, max = { x = 3, y = 4, z = 3 } },
+			texture = "x_mob_core_sparkle.png^[multiply:#55FFFF",
+			glow = 12,
+		})
+	end
+
+	return math.max(4, math.floor((base_damage or 0) * 0.5 + 0.5))
+end
+x_mob_core.check_crystallize_shatter = status_effects.check_crystallize_shatter
+
+-- Scale player knockback by active knockback_resilience / root status effects
+local orig_calculate_knockback = core.calculate_knockback
+rawset(core, "calculate_knockback", function(
+		player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
+	local kb = orig_calculate_knockback
+		and orig_calculate_knockback(player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
+		or (damage or 0)
+	if not kb or kb <= 0 or not player or not player:is_valid() then
+		return kb or 0
+	end
+	if status_effects.is_rooted(player) then
+		return 0
+	end
+	local res = status_effects.get_knockback_resilience(player)
+	if res and res > 0 then
+		if res >= 1.0 then return 0 end
+		return kb * (1.0 - res)
+	end
+	return kb
+end)
+
+-- Intercept player punches to apply brittle damage amplification, PvP attack multipliers, and pickaxe shatter
+core.register_on_punchplayer(function(player, hitter, _time_from_last_punch, tool_capabilities, _dir, damage)
+	if status_effects.is_secondary_punch() or not player or not player:is_valid() then return end
+
+	-- Check pickaxe shatter synergy for crystallize (capture mult before removal)
+	local mult = status_effects.get_damage_multiplier(player) or 1.0
+	local shatter_bonus = status_effects.check_crystallize_shatter(player, hitter, tool_capabilities, damage)
+
+	-- Combine incoming vulnerability multiplier (> 1.0) with outgoing player attack_multiplier (PvP)
+	local att_mult = 1.0
+	if hitter and hitter:is_valid() and hitter:is_player() then
+		att_mult = status_effects.get_attack_multiplier(hitter) or 1.0
+	end
+	local vuln_mult = (mult > 1.0) and mult or 1.0
+	local combined_mult = vuln_mult * att_mult
+
+	local extra_dmg = shatter_bonus
+	if damage and damage > 0 and combined_mult > 1.0 then
+		extra_dmg = extra_dmg + math.floor(damage * (combined_mult - 1.0) + 0.5)
+	end
+
+	if extra_dmg > 0 then
+		local cur_hp = player:get_hp()
+		if cur_hp > extra_dmg then
+			player:set_hp(cur_hp - extra_dmg)
+		else
+			status_effects.push_secondary_punch()
+			player:punch(hitter or player, 1.0, {
+				full_punch_interval = 1.0,
+				damage_groups = { fleshy = extra_dmg },
+			}, ZERO_VECTOR)
+			status_effects.pop_secondary_punch()
 		end
 	end
 
 	-- Check reactive thorns on punched player
 	local thorns = status_effects.get_thorns(player)
-	if thorns and hitter and hitter:is_valid() then
+	if thorns and hitter and hitter:is_valid() and hitter ~= player then
 		local chance = thorns.chance or 1.0
 		if chance >= 1.0 or math.random() <= chance then
 			local tdmg = thorns.damage or 1
 			local dtype = thorns.damage_type or "fleshy"
+			status_effects.push_secondary_punch()
 			hitter:punch(player, 1.0, {
 				full_punch_interval = 1.0,
 				damage_groups = { [dtype] = tdmg },
-			}, { x = 0, y = 0, z = 0 })
+			}, ZERO_VECTOR)
+			status_effects.pop_secondary_punch()
 		end
 	end
 end)
@@ -1545,6 +1682,52 @@ status_effects.register_preset("shadow_march", {
 	envelop = true,
 })
 
+status_effects.register_preset("earth_anchor", {
+	type = "custom",
+	category = "debuff",
+	duration = 4.0,
+	gravity_factor = 2.4,
+	jump_factor = 0.0,
+	speed_factor = 0.55,
+	envelop = true,
+})
+
+status_effects.register_preset("bone_shackles", {
+	type = "root",
+	category = "debuff",
+	duration = 3.0,
+	speed_factor = 0.0,
+	jump_factor = 0.0,
+	anti_heal = true,
+	envelop = true,
+})
+
+status_effects.register_preset("crystallize", {
+	type = "custom",
+	category = "debuff",
+	duration = 4.0,
+	speed_factor = 0.15,
+	jump_factor = 0.0,
+	damage_multiplier = 1.35,
+	envelop = true,
+})
+
+status_effects.register_preset("bleed", {
+	type = "dot",
+	category = "debuff",
+	damage = 1,
+	interval = 1.0,
+	duration = 4.0,
+	damage_type = "bleed",
+})
+
+status_effects.register_preset("curse", {
+	type = "debuff",
+	category = "debuff",
+	duration = 5.0,
+	anti_heal = true,
+})
+
 -- ============================================================================
 -- 6. PUBLIC API EXPORTS
 -- ============================================================================
@@ -1615,6 +1798,10 @@ function x_mob_core.get_speed_multiplier(target)
 end
 
 x_mob_core.get_knockback_resilience = status_effects.get_knockback_resilience
+x_mob_core.has_anti_heal = status_effects.has_anti_heal
+x_mob_core.is_secondary_punch = status_effects.is_secondary_punch
+x_mob_core.push_secondary_punch = status_effects.push_secondary_punch
+x_mob_core.pop_secondary_punch = status_effects.pop_secondary_punch
 x_mob_core.cleanse_debuffs = status_effects.cleanse_debuffs
 x_mob_core.dispel_buffs = status_effects.dispel_buffs
 
