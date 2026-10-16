@@ -3,8 +3,8 @@
     "type": "MOD",
     "title": "X Mob Core",
     "name": "x_mob_core",
-    "short_description": "High-performance, zero-dependency S.O.L.I.D. mob and spawner framework for Luanti.",
-    "long_description": "A modular, zero-dependency mob engine and spawner framework for Luanti based on S.O.L.I.D. software architecture principles. Provides 3D A* hierarchical pathfinding, motor and steering controllers, glTF multi-track animation dispatching, combat and tool wear mechanics, multi-agent pack coordination, and dynamic natural mapgen and trickle spawning.",
+    "short_description": "A smooth, lightweight mob framework that powers smart creatures, animal packs, and tactical combat without slowing down your server.",
+    "long_description": "X Mob Core brings worlds to life with intelligent, lifelike creatures while keeping servers running at peak speed. Whether it's fish swimming in realistic schools, monster squads cooperating to hunt, or creatures navigating tricky terrain, X Mob Core handles it all smoothly. Features built-in support for fluid animations, immersive sounds, responsive status effects, and natural wildlife spawning—all designed from the ground up to prevent server lag even on busy multiplayer worlds.",
     "dev_state": "ACTIVELY_DEVELOPED",
     "tags": [
         "library",

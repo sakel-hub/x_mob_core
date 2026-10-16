@@ -8,7 +8,9 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sakel-hub/x_mob_core/pulls)
 ![AI-Assisted](https://img.shields.io/badge/AI--assisted-gray)
 
-A high-performance, **zero-dependency** mob engine and spawner framework for Luanti built on **S.O.L.I.D.** architecture principles.
+A smooth, lightweight mob framework that powers smart creatures, animal packs, and tactical combat without slowing down your server.
+
+**X Mob Core** brings Luanti worlds to life with intelligent, lifelike creatures while keeping servers running at peak speed. Whether it's fish swimming in realistic schools, monster squads cooperating to hunt, or creatures navigating tricky terrain, X Mob Core handles it all smoothly. Features built-in support for fluid animations, immersive sounds, responsive status effects, and natural wildlife spawning—all designed from the ground up to prevent server lag even on busy multiplayer worlds.
 
 ![X Mob Core Technical Blueprint Showcase](screenshot.png)
 
@@ -68,73 +70,6 @@ A high-performance, **zero-dependency** mob engine and spawner framework for Lua
   - Pub-sub event bus (`listen`, `unlisten`, `emit`) for decoupled mod hooks (`on_mob_spawn`, `on_mob_death`, `on_mob_target`, `on_mob_damage`).
 - **Positional Audio Subsystem**:
   - Spatial distance attenuation and pitch randomization for hurt, death, attack, ambient, and alert sound cues.
-
----
-
-## Architecture
-
-```text
-x_mob_core/
-├── mod.conf                 # Mod metadata and dependencies
-├── .cdb.json                # ContentDB package metadata
-├── LICENSE.txt              # MIT License
-├── README.md                # Mod documentation and showcase
-├── API.md                   # Complete API reference and EmmyLua documentation
-├── settingtypes.txt         # Engine configuration settings
-├── api.lua                  # Public API namespace 'x_mob_core'
-├── init.lua                 # Bootstrap entry point
-├── core/
-│   ├── types.lua            # EmmyLua type definitions and interfaces
-│   ├── utils.lua            # UUID generator, line-of-sight, ground scan helpers
-│   └── events.lua           # Event bus registry (pub/sub)
-├── navigation/
-│   ├── min_heap.lua         # Binary min-heap priority queue
-│   ├── path_cache.lua       # Content ID and path cache
-│   ├── fast_pathfinder.lua  # Volumetric raycasts and 3D A* search
-│   └── mob_memory.lua       # Spatial memory blackboard
-├── motor/
-│   ├── node_cache.lua       # Cached VoxelArea & node lookups
-│   ├── doors.lua            # Door opening detection and interaction
-│   ├── surface.lua          # Surface alignment and rotation interpolation
-│   ├── safety.lua           # Aquatic detection, shore finding, step safety checks
-│   ├── locomotion.lua       # Yaw, velocity, liquid buoyancy, wall collision, movement
-│   └── mob_ai.lua           # Navigation coordinator (pursuit-gating, wander/move steps)
-├── animation/
-│   └── animator.lua         # glTF multi-track dispatcher
-├── combat/
-│   ├── damage.lua           # Damage calculation and tool wear
-│   ├── knockback.lua        # Knockback physics dampening
-│   ├── effects.lua          # Damage indication and directional particles
-│   ├── factions.lua         # Faction allegiance and relationship checks
-│   ├── health_bar.lua       # Procedural overhead health bar rendering and color bands
-│   ├── melee.lua            # Declarative melee combat, reach checks, and attack delays
-│   ├── shooter.lua          # Predictive intercept aiming, kiting, and projectile pipeline
-│   ├── loot.lua             # Radial parabolic item drops and declarative drop tables
-│   ├── envelop.lua          # Reusable 3D sleeve envelop framework
-│   ├── status_effects.lua   # Centralized status effects, physics overrides, and DoTs
-│   ├── hud_effects.lua      # Responsive full-viewport HUD screen vignettes
-│   ├── hunger_adapter.lua   # Multi-mod hunger and stamina drain adapter
-│   └── detachment.lua       # Child, passenger, and arrow detachment on death
-├── spawning/
-│   ├── registry.lua         # Spawn rule registry
-│   ├── conditions.lua       # Ground, light, elevation, density validators
-│   └── engine.lua           # Mapgen and trickle spawner loops
-├── pack/
-│   ├── squad.lua            # Leader/follower tracking, orphan adoption, and leader election
-│   ├── coordination.lua     # Spatial leash tethering and aggro broadcast
-│   ├── swarm.lua            # 3D aerial flocking, vortex holding, and dive-bomb runs
-│   └── shoal.lua            # Aquatic schooling, alignment, and separation
-├── lifecycle/
-│   ├── entity_wrapper.lua   # Engine entity registration adapter
-│   ├── state_machine.lua    # State execution pipeline (idle, walk, combat, flee, custom)
-│   ├── combat_handler.lua   # Universal combat punch intake and event dispatching
-│   ├── culling.lua          # Multiplayer distance-based LOD and sleep culling
-│   ├── environment.lua      # Node interaction, fall damage, and liquid buoyancy
-│   ├── pipeline.lua         # Prioritized step middleware pipeline
-│   └── properties.lua       # Dynamic property sync and scale management
-└── audio/
-    └── sound.lua            # Positional audio dispatcher and pitch variation
-```
 
 ---
 
@@ -400,12 +335,10 @@ Configurable via `minetest.conf` or the Luanti **Settings -> Mod Settings** UI:
 | Setting | Type | Default | Description |
 |:---|:---|:---|:---|
 | `x_mob_damage_particles` | `enum` | `mob_default` | Visual damage particle style (`mob_default`, `blood`, `smoke`, `ichor`, `spectral`, `sparks`, `none`). |
-| `x_mob_damage_particle_multiplier` | `float` | `1.0` | Global particle count scaling multiplier (`0.0` to `3.0`). |
 | `x_mob_core_enable_health_bars` | `bool` | `true` | Enable procedural overhead health bars when mobs take damage. |
 | `x_mob_core_health_bar_timeout` | `float` | `4.0` | Duration in seconds before a mob health bar automatically hides (`1.0` to `30.0`). |
 | `x_mob_core_health_bar_auto_remove` | `bool` | `true` | Automatically remove inactive health bar child entities on timeout instead of keeping hidden. |
 | `x_mob_core_enable_hud_vignettes` | `bool` | `true` | Enable responsive fullscreen HUD screen vignettes for status effects. |
-| `x_mob_core_hud_vignette_opacity_multiplier` | `float` | `1.0` | Opacity/prominence scaling multiplier for HUD vignettes (`0.5` to `2.5`). |
 
 ---
 
@@ -429,14 +362,14 @@ npm run test:perf
 
 | Metric | Mobs Redo API (`mobs_redo`) | Creatura (`creatura`) | X Mob Core (`x_mob_core`) | Advantage / Improvement |
 |:---|:---|:---|:---|:---|
-| **Average Step Latency** | `1,758.5 µs/tick` | `1,029.3 µs/tick` | **`553.3 µs/tick`** | **3.18x faster** than Mobs Redo, **1.86x faster** than Creatura |
-| **Peak Tick Latency** | `3,252.0 µs` | `2,739.0 µs` | **`1,033.0 µs`** | **3.15x lower spikes**, preventing tick jitter |
+| **Average Step Latency** | `1713.7 µs/tick` | `1005.4 µs/tick` | **`560.6 µs/tick`** | **3.06x faster** than Mobs Redo, **1.79x faster** than Creatura |
+| **Peak Tick Latency** | `3088.0 µs` | `2572.0 µs` | **`1089.0 µs`** | **2.84x lower spikes**, preventing tick jitter |
 | **Server TPS (20 Target)** | `20.0 TPS` | `20.0 TPS` | **`20.0 TPS`** | **98.9% tick headroom** |
-| **Max Capacity (15ms Budget)** | `~1,279 mobs` | `~2,185 mobs` | **`~4,066 mobs`** | **3.18x higher entity capacity** |
-| **Node / Map Queries** | `709,518 queries` | `101,369 queries` | **`4,390 queries`** | **99.38% reduction** in map queries |
-| **A\* Path Searches** | `17,591 searches` | `2,841 searches` | **`146 searches`** | **99.17% reduction** via Corridor LOS & LOD |
-| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`4,908 bypasses`** | Zero-overhead straight-line pursuit |
-| **Lua GC Memory Rate** | `12,681.1 KB/s` | `4,070.8 KB/s` | **`392.6 KB/s`** | **32.30x lower memory churn** |
-| **Network Egress Bandwidth** | `6,348.56 KB/s` | `6,592.43 KB/s` | **`5,636.73 KB/s`** | **11.2% to 14.5% bandwidth reduction** |
+| **Max Capacity (15ms Budget)** | `~1312 mobs` | `~2237 mobs` | **`~4013 mobs`** | **3.06x higher entity capacity** |
+| **Node / Map Queries** | `746530 queries` | `88085 queries` | **`8374 queries`** | **98.88% reduction** in map queries |
+| **A\* Path Searches** | `18667 searches` | `2083 searches` | **`266 searches`** | **98.58% reduction** via Corridor LOS & LOD |
+| **Corridor Fast-Path Bypasses** | `0 (N/A)` | `0 (N/A)` | **`3736 bypasses`** | Zero-overhead straight-line pursuit |
+| **Lua GC Memory Rate** | `13242.4 KB/s` | `3663.5 KB/s` | **`583.7 KB/s`** | **22.69x lower memory churn** |
+| **Network Egress Bandwidth** | `6582.49 KB/s` | `7238.99 KB/s` | **`5395.46 KB/s`** | **18.0% to 25.5% bandwidth reduction** |
 
 For complete multi-scenario tables (Concurrency Scaling, Entity Density, Obstacle Stress, and Distance LOD), see [benchmark_results.md](benchmark_results.md).

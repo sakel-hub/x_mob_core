@@ -16,7 +16,6 @@
 
 # 3D models and authoring assets
 *.blend binary
-*.blend1 binary
 *.ai binary
 models/*.b3d binary
 models/*.glb binary
