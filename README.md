@@ -10,7 +10,7 @@
 
 A smooth, lightweight mob framework that powers smart creatures, animal packs, and tactical combat without slowing down your server.
 
-**X Mob Core** brings Luanti worlds to life with intelligent, lifelike creatures while keeping servers running at peak speed. Whether it's fish swimming in realistic schools, monster squads cooperating to hunt, or creatures navigating tricky terrain, X Mob Core handles it all smoothly. Features built-in support for fluid animations, immersive sounds, responsive status effects, and natural wildlife spawning—all designed from the ground up to prevent server lag even on busy multiplayer worlds.
+**X Mob Core** is a developer API and high-performance mob framework for Luanti. *(Note: This package is a pure underlying engine library and does not add standalone mobs on its own; pair it with a mob pack such as [x_mobs](https://github.com/sakel-hub/x_mobs) or use it to build your own custom entities).* Whether it's fish swimming in realistic schools, monster squads cooperating to hunt, or creatures navigating tricky terrain, X Mob Core handles it all smoothly. Features built-in support for fluid animations, immersive sounds, responsive status effects, and natural wildlife spawning—all designed from the ground up to prevent server lag even on busy multiplayer worlds.
 
 ![X Mob Core Technical Blueprint Showcase](screenshot.png)
 
