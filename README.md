@@ -2,7 +2,7 @@
 
 [![ContentDB](https://content.luanti.org/packages/SaKeL/x_mob_core/shields/title/)](https://content.luanti.org/packages/SaKeL/x_mob_core/)
 [![ContentDB Downloads](https://content.luanti.org/packages/SaKeL/x_mob_core/shields/downloads/)](https://content.luanti.org/packages/SaKeL/x_mob_core/)
-![Luanti](https://img.shields.io/badge/Luanti-5.17%2B-5599ff.svg)
+![Luanti](https://img.shields.io/badge/Luanti-5.10%2B-5599ff.svg)
 [![Luacheck](https://img.shields.io/github/actions/workflow/status/sakel-hub/x_mob_core/luacheck.yml?label=Luacheck&logo=lua)](https://github.com/sakel-hub/x_mob_core/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sakel-hub/x_mob_core/pulls)
