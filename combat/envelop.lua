@@ -13,6 +13,10 @@ local S = core.get_translator("x_mob_core")
 local modpath = core.get_modpath("x_mob_core") or "."
 local animator = (x_mob_core and x_mob_core.animator) or dofile(modpath .. "/animation/animator.lua")
 
+--- Visual Envelop Subsystem module
+---@class EnvelopSubsystem
+local envelop = {}
+
 --- Active enveloped targets tracking
 --- Key: player_name string or mob LuaEntity table
 ---@type table<string|table, EnvelopTargetRecord>
@@ -191,7 +195,7 @@ core.register_entity("x_mob_core:envelop", {
 		end
 
 		if target:is_player() and target:get_hp() <= 0 then
-			x_mob_core.remove_envelop(target)
+			envelop.remove_envelop(target)
 			return
 		end
 
@@ -230,7 +234,7 @@ core.register_entity("x_mob_core:envelop", {
 				count = count + 1
 			end
 			if count == 0 then
-				x_mob_core.remove_envelop(target)
+				envelop.remove_envelop(target)
 				return
 			end
 			local new_tex = self:get_composite_texture()
@@ -247,7 +251,7 @@ core.register_entity("x_mob_core:envelop", {
 ---@param target ObjectRef Target player or entity
 ---@param effect_id? string Optional specific effect ID to query
 ---@return boolean is_enveloped True if active envelop/effect exists
-function x_mob_core.is_enveloped(target, effect_id)
+function envelop.is_enveloped(target, effect_id)
 	if not target or not target:is_valid() then return false end
 	local key = get_target_key(target)
 	local data = active_envelops[key]
@@ -264,7 +268,7 @@ end
 --- Returns active envelop data record for target if present
 ---@param target ObjectRef Target player or entity
 ---@return EnvelopTargetRecord? data Active envelop metadata
-function x_mob_core.get_envelop_data(target)
+function envelop.get_envelop_data(target)
 	if not target or not target:is_valid() then return nil end
 	local key = get_target_key(target)
 	return active_envelops[key]
@@ -273,7 +277,7 @@ end
 --- Removes a specific active effect from target's envelop, preserving remaining effects
 ---@param target ObjectRef Target player or entity
 ---@param effect_id string Unique effect ID to remove
-function x_mob_core.remove_envelop_effect(target, effect_id)
+function envelop.remove_envelop_effect(target, effect_id)
 	if not target or not target:is_valid() or not effect_id then return end
 	local key = get_target_key(target)
 	local data = active_envelops[key]
@@ -294,7 +298,7 @@ function x_mob_core.remove_envelop_effect(target, effect_id)
 			count = count + 1
 		end
 		if count == 0 then
-			x_mob_core.remove_envelop(target)
+			envelop.remove_envelop(target)
 		else
 			local new_tex = ent:get_composite_texture()
 			ent.object:set_properties({ textures = { new_tex } })
@@ -304,7 +308,7 @@ end
 
 --- Removes all active effects and detaches/removes envelop entity from target
 ---@param target ObjectRef Target player or entity
-function x_mob_core.remove_envelop(target)
+function envelop.remove_envelop(target)
 	if not target or not target:is_valid() then return end
 	local key = get_target_key(target)
 	local data = active_envelops[key]
@@ -329,7 +333,7 @@ end
 ---@param target ObjectRef Target player or entity to envelop
 ---@param effect_def table Configuration: { id: string, duration: number, texture: string }
 ---@return ObjectRef? Envelop entity object
-function x_mob_core.apply_envelop(target, effect_def)
+function envelop.apply_envelop(target, effect_def)
 	if not target or not target:is_valid() or not effect_def or not effect_def.id then
 		return nil
 	end
@@ -436,31 +440,27 @@ core.register_on_joinplayer(function(player)
 end)
 
 core.register_on_dieplayer(function(player)
-	x_mob_core.remove_envelop(player)
+	envelop.remove_envelop(player)
 end)
 
 core.register_on_respawnplayer(function(player)
-	x_mob_core.remove_envelop(player)
+	envelop.remove_envelop(player)
 end)
 
 core.register_on_leaveplayer(function(player)
-	x_mob_core.remove_envelop(player)
+	envelop.remove_envelop(player)
 end)
 
 core.register_on_shutdown(function()
 	for _, player in ipairs(core.get_connected_players()) do
-		x_mob_core.remove_envelop(player)
+		envelop.remove_envelop(player)
 	end
 end)
 
----Visual Envelop and Status FX Subsystem.
----@class EnvelopSubsystem
-local envelop = {
-	apply_envelop = x_mob_core.apply_envelop,
-	remove_envelop = x_mob_core.remove_envelop,
-	remove_envelop_effect = x_mob_core.remove_envelop_effect,
-	is_enveloped = x_mob_core.is_enveloped,
-	get_envelop_data = x_mob_core.get_envelop_data,
-}
+x_mob_core.apply_envelop = envelop.apply_envelop
+x_mob_core.remove_envelop = envelop.remove_envelop
+x_mob_core.remove_envelop_effect = envelop.remove_envelop_effect
+x_mob_core.is_enveloped = envelop.is_enveloped
+x_mob_core.get_envelop_data = envelop.get_envelop_data
 
 return envelop

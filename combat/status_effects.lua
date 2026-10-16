@@ -227,9 +227,9 @@ local function apply_physics_modifier(player, effect_id, speed_factor, jump_fact
 	end
 
 	player_physics_modifiers[pname][effect_id] = {
-		speed_factor = speed_factor,
-		jump_factor = jump_factor,
-		gravity_factor = gravity_factor,
+		speed_factor = speed_factor or 1.0,
+		jump_factor = jump_factor or 1.0,
+		gravity_factor = gravity_factor or 1.0,
 	}
 
 	recalculate_vanilla_physics(player)
@@ -1047,10 +1047,10 @@ function status_effects.apply_effect(target, effect_def)
 		 norm.on_tick_particles ~= nil)
 
 	-- Always schedule an authoritative failsafe expiration timer via core.after.
-	-- For ticking effects, an extra 0.05s grace period allows the final periodic tick to resolve.
-	-- This guarantees that regardless of periodic ticker errors, pauses, or desyncs,
-	-- the status effect and all associated physics/visual modifiers are strictly expired.
-	local failsafe_duration = has_ticker and (norm.duration + 0.05) or norm.duration
+	-- Enveloped effects grant a 0.5s grace window to allow envelop entity on_step ticks
+	-- to finalize, while pure status effects expire promptly after a 0.05s grace buffer.
+	local failsafe_grace = norm.envelop_texture and 0.5 or (has_ticker and 0.05 or 0)
+	local failsafe_duration = norm.duration + failsafe_grace
 	core.after(failsafe_duration, function()
 		if not target or not target:is_valid() then return end
 		local k = get_target_key(target)
@@ -1732,78 +1732,12 @@ status_effects.register_preset("curse", {
 -- 6. PUBLIC API EXPORTS
 -- ============================================================================
 
----Applies or refreshes a status effect on target (player or mob entity).
----@param target ObjectRef Target player or entity
----@param effect_def StatusEffectDef|string Status effect definition table or preset name
----@return ObjectRef|boolean result Envelop object if envelop attached, or true on success
-function x_mob_core.apply_status_effect(target, effect_def)
-	return status_effects.apply_effect(target, effect_def)
-end
-
----Removes an active status effect from target.
----@param target ObjectRef Target player or entity
----@param effect_id string Unique effect ID to remove
----@return boolean success True if effect was removed
-function x_mob_core.remove_status_effect(target, effect_id)
-	return status_effects.remove_effect(target, effect_id)
-end
-
----Checks if target currently has an active status effect.
----@param target ObjectRef Target player or entity
----@param effect_id string Unique effect ID
----@return boolean has_effect True if effect is active
-function x_mob_core.has_status_effect(target, effect_id)
-	return status_effects.has_effect(target, effect_id)
-end
-
----Checks if target is currently rooted / immobilized.
----@param target ObjectRef Target player or entity
----@return boolean is_rooted True if target has an active root status effect or speed_factor <= 0
-function x_mob_core.is_rooted(target)
-	return status_effects.is_rooted(target)
-end
-
----Retrieves all active status effects for a target.
----@param target ObjectRef Target player or entity
----@return table? effects Active status effects map
-function x_mob_core.get_status_effects(target)
-	return status_effects.get_effects(target)
-end
-
----Clears all active status effects and restores baseline physics on target.
----@param target ObjectRef Target player or entity
-function x_mob_core.clear_status_effects(target)
-	return status_effects.clear_effects(target)
-end
-
----Retrieves compound damage multiplier across all active status effects on target.
----@param target ObjectRef Target player or entity
----@return number multiplier Compound damage multiplier
-function x_mob_core.get_damage_multiplier(target)
-	return status_effects.get_damage_multiplier(target)
-end
-
----Retrieves compound outgoing attack multiplier across all active status effects on target.
----@param target ObjectRef Target player or entity
----@return number multiplier Compound attack multiplier (default 1.0)
-function x_mob_core.get_attack_multiplier(target)
-	return status_effects.get_attack_multiplier(target)
-end
-
----Retrieves compound movement speed multiplier across all active status effects on target.
----@param target ObjectRef Target player or entity
----@return number multiplier Compound speed multiplier (default 1.0)
-function x_mob_core.get_speed_multiplier(target)
-	return status_effects.get_speed_multiplier(target)
-end
-
-x_mob_core.get_knockback_resilience = status_effects.get_knockback_resilience
-x_mob_core.has_anti_heal = status_effects.has_anti_heal
-x_mob_core.is_secondary_punch = status_effects.is_secondary_punch
-x_mob_core.push_secondary_punch = status_effects.push_secondary_punch
-x_mob_core.pop_secondary_punch = status_effects.pop_secondary_punch
-x_mob_core.cleanse_debuffs = status_effects.cleanse_debuffs
-x_mob_core.dispel_buffs = status_effects.dispel_buffs
+-- Export convenience aliases on the subsystem table
+status_effects.apply_status_effect = status_effects.apply_effect
+status_effects.remove_status_effect = status_effects.remove_effect
+status_effects.has_status_effect = status_effects.has_effect
+status_effects.get_status_effects = status_effects.get_effects
+status_effects.clear_status_effects = status_effects.clear_effects
 
 ---Applies a positive buff to target using a registered preset or definition table.
 ---@param target ObjectRef Target player or entity
@@ -1826,7 +1760,6 @@ function status_effects.apply_buff(target, preset_or_def, custom_options)
 	def.category = def.category or "buff"
 	return status_effects.apply_effect(target, def)
 end
-x_mob_core.apply_buff = status_effects.apply_buff
 
 ---Registers a reusable status effect preset.
 ---@param name string Preset identifier
@@ -1834,10 +1767,6 @@ x_mob_core.apply_buff = status_effects.apply_buff
 function status_effects.register_status_effect_preset(name, def)
 	return status_effects.register_preset(name, def)
 end
-x_mob_core.register_status_effect_preset = status_effects.register_status_effect_preset
-x_mob_core.register_status_preset = status_effects.register_preset
-x_mob_core.status_effects = status_effects
-x_mob_core.get_thorns = status_effects.get_thorns
 
 ---Scales damage groups by an outgoing damage multiplier.
 ---@param groups table<string, number> Damage groups map
@@ -1851,6 +1780,25 @@ function status_effects.scale_damage_groups(groups, mult)
 	end
 	return scaled
 end
+
+x_mob_core.apply_status_effect = status_effects.apply_effect
+x_mob_core.remove_status_effect = status_effects.remove_effect
+x_mob_core.has_status_effect = status_effects.has_effect
+x_mob_core.is_rooted = status_effects.is_rooted
+x_mob_core.get_status_effects = status_effects.get_effects
+x_mob_core.clear_status_effects = status_effects.clear_effects
+x_mob_core.get_damage_multiplier = status_effects.get_damage_multiplier
+x_mob_core.has_anti_heal = status_effects.has_anti_heal
+x_mob_core.is_secondary_punch = status_effects.is_secondary_punch
+x_mob_core.push_secondary_punch = status_effects.push_secondary_punch
+x_mob_core.pop_secondary_punch = status_effects.pop_secondary_punch
+x_mob_core.apply_buff = status_effects.apply_buff
+x_mob_core.cleanse_debuffs = status_effects.cleanse_debuffs
+x_mob_core.dispel_buffs = status_effects.dispel_buffs
+x_mob_core.get_speed_multiplier = status_effects.get_speed_multiplier
+x_mob_core.get_attack_multiplier = status_effects.get_attack_multiplier
+x_mob_core.get_knockback_resilience = status_effects.get_knockback_resilience
+x_mob_core.get_thorns = status_effects.get_thorns
 x_mob_core.scale_damage_groups = status_effects.scale_damage_groups
 
 return status_effects

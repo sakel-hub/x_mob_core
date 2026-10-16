@@ -639,6 +639,29 @@ function x_mob_core.is_rooted(target)
 	return x_mob_core.combat.status_effects.is_rooted(target)
 end
 
+---Checks if target is currently affected by anti-healing status effects.
+---@param target ObjectRef Target player or entity
+---@return boolean has_anti_heal True if target has an active anti-heal status effect
+function x_mob_core.has_anti_heal(target)
+	return x_mob_core.combat.status_effects.has_anti_heal(target)
+end
+
+---Checks whether execution is currently inside an internal secondary punch (e.g. DoT tick or thorns).
+---@return boolean is_secondary True if punch was triggered by DoT or damage reflection
+function x_mob_core.is_secondary_punch()
+	return x_mob_core.combat.status_effects.is_secondary_punch()
+end
+
+---Pushes secondary punch recursion guard depth.
+function x_mob_core.push_secondary_punch()
+	x_mob_core.combat.status_effects.push_secondary_punch()
+end
+
+---Pops secondary punch recursion guard depth.
+function x_mob_core.pop_secondary_punch()
+	x_mob_core.combat.status_effects.pop_secondary_punch()
+end
+
 ---Retrieves all active status effects for a target.
 ---@param target ObjectRef Target player or entity
 ---@return table<string, ActiveEffectRecord>? effects Active status effects map
@@ -861,7 +884,7 @@ end
 ---@param dtime number Step delta time
 ---@param walk_anim? string Walking animation track name
 ---@param idle_anim? string Idle animation track name
----@return boolean is_moving Whether the mob is currently walking
+---@return LocomotionStatus|nil nav Navigation state
 function x_mob_core.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
 	return x_mob_core.motor.ai.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
 end
@@ -872,7 +895,7 @@ end
 ---@param move_anim? string Movement animation track name
 ---@param anim_speed? number Animation speed multiplier
 ---@param idle_anim? string Idle animation track name
----@return boolean is_moving Whether the mob is actively moving
+---@return LocomotionStatus|nil nav Navigation state
 function x_mob_core.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
 	return x_mob_core.motor.ai.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
 end
@@ -1012,7 +1035,7 @@ end
 ---Searches nearby area to adopt orphans or re-link separated followers.
 ---@param leader_self MobEntity Leader mob instance
 ---@param search_radius? number Radius to search in nodes (default: 32.0)
----@return integer count Number of orphans adopted
+---@return integer count Total count of followers in pack after adoption
 function x_mob_core.adopt_nearby_orphans(leader_self, search_radius)
 	return x_mob_core.pack.squad.adopt_nearby_orphans(leader_self, search_radius)
 end
