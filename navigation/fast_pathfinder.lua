@@ -102,10 +102,11 @@ end
 --- Core A* Search Generator (Executed inside a coroutine)
 ---@param start_pos Vector
 ---@param target_pos Vector
----@param abilities table
+---@param abilities? MobMovementDef
 ---@param mob_height integer
----@return table|nil waypoints
+---@return Vector[]|nil waypoints
 local function astar_search(start_pos, target_pos, abilities, mob_height)
+	abilities = abilities or {}
 	if not path_cache.initialized then
 		path_cache.init()
 	end
@@ -972,9 +973,9 @@ end
 --- Queues an asynchronous pathfinding task
 ---@param start_pos Vector Starting world position
 ---@param target_pos Vector Target world position
----@param abilities table Mob movement capabilities
----@param callback fun(path: table|nil) Callback invoked upon path completion
----@param mob_height integer|nil Mob height clearance in nodes
+---@param abilities? MobMovementDef Mob movement capabilities
+---@param callback fun(path: Vector[]|nil) Callback invoked upon path completion
+---@param mob_height? integer Mob height clearance in nodes
 function fast_pathfinder.find_path(start_pos, target_pos, abilities, callback, mob_height)
 	local height = math.max(1, math.ceil(mob_height or DEFAULT_MOB_HEIGHT))
 	local co = coroutine.create(function()
@@ -987,11 +988,11 @@ function fast_pathfinder.find_path(start_pos, target_pos, abilities, callback, m
 end
 
 --- Synchronous path request (for fallback or immediate test verification)
----@param start_pos Vector
----@param target_pos Vector
----@param abilities table
----@param mob_height integer|nil
----@return table|nil
+---@param start_pos Vector Starting world position
+---@param target_pos Vector Target world position
+---@param abilities? MobMovementDef Mob movement capabilities
+---@param mob_height? integer Mob height clearance in nodes
+---@return Vector[]|nil path Array of waypoint positions or nil
 function fast_pathfinder.find_path_sync(start_pos, target_pos, abilities, mob_height)
 	local height = math.max(1, math.ceil(mob_height or DEFAULT_MOB_HEIGHT))
 	local result = nil

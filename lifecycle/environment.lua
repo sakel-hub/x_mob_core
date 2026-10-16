@@ -13,10 +13,10 @@ local utils = dofile(modpath .. "/core/utils.lua")
 local scratch_probe = {x = 0, y = 0, z = 0}
 
 --- Throttled step processor evaluating environmental hazards
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param dtime number Step delta time
----@param def table Entity definition table
----@param combat_handler table Combat handler subsystem
+---@param def MobRegistrationDef Entity definition table
+---@param combat_handler CombatHandlerSubsystem Combat handler subsystem
 ---@return boolean handled True if mob died from environmental damage
 function environment.step(self, dtime, def, combat_handler)
 	if self.is_dead or self.state == "dying" then return false end

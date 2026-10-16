@@ -4,7 +4,7 @@
 ]]
 
 ---@class EventsSubsystem
----@field listeners table<string, fun(...)[]>
+---@field listeners table<string, (fun(...: any)|false)[]>
 local events = {
 	listeners = {},
 }

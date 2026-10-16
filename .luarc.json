@@ -49,7 +49,8 @@
       "redundant-return-value",
       "undefined-doc-param",
       "undefined-field",
-      "undefined-doc-name"
+      "undefined-doc-name",
+      "inject-field"
     ]
   },
   "format": {

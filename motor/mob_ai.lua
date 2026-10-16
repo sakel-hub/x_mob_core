@@ -72,7 +72,7 @@ end
 
 --- Calculates target vertical velocity for floating mobs during combat pursuit
 --- Anchors hovering elevation slightly above ground or target footing
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param current_pos Vector Current mob world position
 ---@param target_pos Vector Target world position
 ---@return number y_vel Vertical velocity
@@ -88,9 +88,9 @@ local function calculate_floating_combat_elevation(self, current_pos, target_pos
 end
 
 --- Updates entity navigation, scanning, line-of-sight, and path execution
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
----@return table status Locomotion status {moving = boolean, speed = number, has_los = boolean}
+---@return LocomotionStatus status Locomotion status
 function mob_ai.update_navigation(self, dtime)
 	-- Initialize navigation state tables and abilities if missing
 	safety.init_abilities(self)
@@ -1067,7 +1067,7 @@ function mob_ai.register_pathfinding_mob(name, def)
 end
 
 --- Scans for the nearest valid living player within range and direct line of sight
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param scan_radius? number Max search radius (default: self.aggro_radius or 16.0)
 ---@param eye_height? number Mob eye height offset (default: self.eye_offset or 1.5)
 ---@return ObjectRef|nil nearest_player
@@ -1110,12 +1110,12 @@ function mob_ai.scan_for_player(self, scan_radius, eye_height)
 end
 
 --- Updates navigation movement and dispatches walk/run or idle animation
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
 ---@param move_anim? string Movement animation (default: "walk")
 ---@param anim_speed? number Animation speed (default: 1.0)
 ---@param idle_anim? string Idle animation (default: "idle")
----@return table|nil nav Navigation state
+---@return LocomotionStatus|nil nav Navigation state
 function mob_ai.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
 	local nav = mob_ai.update_navigation(self, dtime)
 	local m_anim = move_anim or "walk"
@@ -1142,10 +1142,11 @@ function mob_ai.step_move_or_idle(self, dtime, move_anim, anim_speed, idle_anim)
 end
 
 --- Executes wander navigation or idle holding when no active target is present
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
 ---@param walk_anim? string Custom walk animation name (default: "walk")
 ---@param idle_anim? string Custom idle animation name (default: "idle")
+---@return LocomotionStatus|nil nav Navigation state
 function mob_ai.step_wander_or_idle(self, dtime, walk_anim, idle_anim)
 	-- Pack follower leash check: if separated from leader, tether wander origin or trigger regroup
 	if self.pack_role == "member" or (self.pack and self.pack.role == "member") then

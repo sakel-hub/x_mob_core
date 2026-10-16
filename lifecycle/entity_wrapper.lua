@@ -461,6 +461,9 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_activate to wire up core state, physics, pack, memory, and persistence
 	local original_on_activate = def.on_activate
+	---@param self MobEntity
+	---@param staticdata? string|table
+	---@param dtime_s? number
 	def.on_activate = function(self, staticdata, dtime_s)
 		-- Deserialize staticdata from previous session
 		local data = {}
@@ -712,6 +715,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Standardized serializer preserving core attributes, hierarchy, and texture phenotypes
 	local original_get_staticdata = def.get_staticdata
+	---@param self MobEntity
 	def.get_staticdata = function(self)
 		local save = {}
 		if original_get_staticdata then
@@ -740,6 +744,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_punch to provide standard combat handling
 	local original_on_punch = def.on_punch
+	---@param self MobEntity
 	def.on_punch = function(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
 		if original_on_punch then
 			local intercepted = original_on_punch(self, puncher, time_from_last_punch, tool_capabilities, dir, damage)
@@ -754,6 +759,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_step to support lifecycle, custom state machine, and custom step
 	local original_on_step = def.on_step
+	---@param self MobEntity
 	def.on_step = function(self, dtime, moveresult)
 		self._moveresult = moveresult
 
@@ -786,6 +792,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_death to guarantee child/arrow detachment and leader death handling
 	local original_on_death = def.on_death
+	---@param self MobEntity
 	def.on_death = function(self, killer)
 		health_bar.remove(self)
 		detachment.detach_attached_children(self.object)
@@ -825,6 +832,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_rightclick to provide decoupled interaction event
 	local original_on_rightclick = def.on_rightclick
+	---@param self MobEntity
 	def.on_rightclick = function(self, clicker)
 		local itemstack = clicker and clicker:is_valid() and clicker:get_wielded_item()
 		x_mob_core.emit("on_mob_rightclick", self, clicker, itemstack)
@@ -835,6 +843,7 @@ function entity_wrapper.register_mob(name, def)
 
 	-- Intercept on_deactivate to guarantee clean resource and HUD release
 	local original_on_deactivate = def.on_deactivate
+	---@param self MobEntity
 	def.on_deactivate = function(self, removal)
 		local reason = removal and "removed" or "unloaded"
 		if def.on_despawn and not self._despawn_handled then

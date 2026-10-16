@@ -13,7 +13,7 @@ local node_cache = dofile(modpath .. "/motor/node_cache.lua")
 local doors = dofile(modpath .. "/motor/doors.lua")
 
 --- Checks if a mob is strictly aquatic (shoal fish, shark, aquatic faction)
----@param self table Entity instance or mob definition table
+---@param self MobEntity|MobRegistrationDef Entity instance or mob definition table
 ---@return boolean is_aquatic
 function safety.is_aquatic_mob(self)
 	local def = (self and self._def) or self
@@ -200,7 +200,7 @@ end
 
 --- Checks if entity is in liquid and calculates water surface and immersion level
 ---@param pos Vector World position
----@param abilities? table Mob abilities table
+---@param abilities? MobAbilities Mob abilities table
 ---@param mob_height? number Height of mob (default 1.5)
 ---@return boolean in_liquid True if in liquid and submerged or at waterline
 ---@return boolean is_submerged True if mob is submerged below target swimming waterline
@@ -263,7 +263,7 @@ end
 --- - Verifies 1-node step-up or direct ground footstep
 ---@param pos Vector Mob position
 ---@param move_dir Vector Horizontal direction vector {x, y, z}
----@param abilities? table Mob abilities (can_swim, can_climb, can_crawl)
+---@param abilities? MobAbilities Mob abilities (can_swim, can_climb, can_crawl)
 ---@param max_drop? number Maximum safe drop height (default 2)
 ---@return boolean is_safe True if the step is physically safe to take
 ---@return string? reason Rejection reason if not safe ("wall", "cliff", "hazard", "water", "headroom")
@@ -500,7 +500,7 @@ end
 --- between pos and target_pos (no chasms, deep cliffs, or un-swimmable water).
 ---@param pos Vector Mob position
 ---@param target_pos Vector Target position
----@param abilities? table Mob abilities
+---@param abilities? MobAbilities Mob abilities
 ---@return boolean has_ground True if continuous safe ground exists
 ---@return string? reason Failure reason if not safe ("water", "cliff", "hazard", etc.)
 function safety.check_ground_line_of_sight(pos, target_pos, abilities)
@@ -589,8 +589,8 @@ function safety.check_ground_line_of_sight(pos, target_pos, abilities)
 end
 
 --- Initializes an entity's inherent abilities and active dynamic abilities table
----@param self table Entity instance
----@param def? table Entity definition table
+---@param self MobEntity Entity instance
+---@param def? MobRegistrationDef Entity definition table
 function safety.init_abilities(self, def)
 	def = def or self._def or (self.name and core.registered_entities[self.name]) or {}
 	if not self.path_state then

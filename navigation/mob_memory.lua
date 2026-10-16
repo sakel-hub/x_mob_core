@@ -20,7 +20,7 @@ local BLOCKED_SLOTS = 2
 local TRAIL_SAMPLE_INTERVAL = 1.0
 
 --- Initializes a zero-allocation working memory buffer on an entity instance
----@param self table Entity instance
+---@param self MobEntity Entity instance
 function mob_memory.init_memory(self)
 	if self.memory and self.memory.trail then return self.memory end
 
@@ -126,7 +126,7 @@ local function get_target_identifier(target_obj)
 end
 
 --- Records or updates target sighting and Last Known Position
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param target_obj ObjectRef Target player or entity
 ---@param target_pos Vector Target position
 ---@param current_time? number Optional current time or timestamp
@@ -146,7 +146,7 @@ function mob_memory.record_target_sighting(self, target_obj, target_pos, current
 end
 
 --- Retrieves active Last Known Position if within the 8.0s pursuit window
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param max_age? number Maximum age in seconds (default: 8.0)
 ---@param current_time? number Current timestamp
 ---@return Vector|nil lkp Last known position or nil if expired
@@ -166,7 +166,7 @@ function mob_memory.get_lkp_target(self, max_age, current_time)
 end
 
 --- Clears target memory explicitly
----@param self table Entity instance
+---@param self MobEntity Entity instance
 function mob_memory.clear_target_memory(self)
 	if self.memory and self.memory.target then
 		self.memory.target.has_record = false
@@ -174,7 +174,7 @@ function mob_memory.clear_target_memory(self)
 end
 
 --- Records a target as temporarily unreachable (e.g. across impassable water or chasm)
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param target_obj ObjectRef Target player or entity
 ---@param duration? number Duration in seconds before re-evaluating (default: 12.0)
 ---@param current_time? number Current timestamp
@@ -194,7 +194,7 @@ function mob_memory.record_unreachable_target(self, target_obj, duration, curren
 end
 
 --- Checks if a target is currently marked as unreachable
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param target_obj ObjectRef Target player or entity
 ---@param current_time? number Current timestamp
 ---@return boolean is_unreachable True if target is unreachable and on cooldown
@@ -212,7 +212,7 @@ function mob_memory.is_target_unreachable(self, target_obj, current_time)
 end
 
 --- Clears unreachable status for a target (e.g. when punched by that target)
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param target_obj ObjectRef Target player or entity
 function mob_memory.clear_unreachable_target(self, target_obj)
 	if not self.memory or not self.memory.unreachable_targets then return end
@@ -221,7 +221,7 @@ function mob_memory.clear_unreachable_target(self, target_obj)
 end
 
 --- Records a danger source (damage taken, enemy position, hazard)
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param danger_pos Vector World coordinates of the threat
 ---@param threat_level number Magnitude of the threat (e.g. damage amount)
 ---@param duration? number Duration in seconds before expiration (default: 12.0)
@@ -246,7 +246,7 @@ function mob_memory.record_danger(self, danger_pos, threat_level, duration, curr
 end
 
 --- Records a combat / fight location
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param fight_pos Vector World coordinates of the fight
 ---@param duration? number Duration in seconds before expiration (default: 45.0)
 ---@param current_time? number Current timestamp
@@ -264,7 +264,7 @@ function mob_memory.record_fight_pos(self, fight_pos, duration, current_time)
 end
 
 --- Retrieves active fight location if not expired
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param current_time? number Current timestamp
 ---@return Vector|nil fight_pos Coordinates of the fight or nil
 function mob_memory.get_fight_pos(self, current_time)
@@ -288,7 +288,7 @@ function mob_memory.get_fight_pos(self, current_time)
 end
 
 --- Clears fight memory explicitly
----@param self table Entity instance
+---@param self MobEntity Entity instance
 function mob_memory.clear_fight_pos(self)
 	if self.memory and self.memory.fight then
 		self.memory.fight.active = false
@@ -297,7 +297,7 @@ end
 
 --- Calculates a spatial repulsion vector away from all active danger spots
 --- Uses inverse-square distance weighting
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param current_pos Vector Current mob position
 ---@param current_time? number Current timestamp
 ---@return Vector repulsion Normalized 3D repulsive vector or {x=0, y=0, z=0}
@@ -372,7 +372,7 @@ function mob_memory.get_danger_repulsion_vector(self, current_pos, current_time)
 end
 
 --- Clears all active danger memories (used on combat re-engagement or panic exit)
----@param self table Entity instance
+---@param self MobEntity Entity instance
 function mob_memory.clear_danger_memory(self)
 	if not self.memory then return end
 	for i = 1, DANGER_SLOTS do
@@ -383,7 +383,7 @@ end
 
 --- Records a visited world position into the circular trail buffer
 --- Throttled to 1.0s intervals to minimize samples
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param current_pos Vector Current mob position
 ---@param dtime number Step delta time
 ---@param current_time? number Current timestamp
@@ -425,7 +425,7 @@ end
 
 --- Calculates an exploration novelty vector pointing away from recently visited positions
 --- Prevents ping-pong oscillations in corridors and dead ends
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param current_pos Vector Current mob position
 ---@return Vector novelty Normalized 3D exploration vector or {x=0, y=0, z=0}
 function mob_memory.get_exploration_bias_vector(self, current_pos)
@@ -474,7 +474,7 @@ function mob_memory.get_exploration_bias_vector(self, current_pos)
 end
 
 --- Records a blocked position or cliff deadlock
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param blocked_pos Vector Position that could not be traversed
 ---@param duration? number Duration in seconds (default: 8.0)
 ---@param current_time? number Current timestamp
@@ -514,7 +514,7 @@ end
 --- Evaluates a candidate movement direction against danger, novelty, and blocked memory
 --- Returns a scalar fitness score (higher is better)
 --- Utilizes a zero-allocation heading evaluation cache to avoid duplicate vector and sqrt computations
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param candidate_dir Vector Candidate heading direction (normalized)
 ---@param current_pos Vector Current mob position
 ---@param current_time? number Current timestamp
@@ -639,7 +639,7 @@ end
 
 --- Updates low-HP tactical fleeing and passive health regeneration
 --- When HP recovers to return threshold, exits fleeing state
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
 ---@param flee_ratio? number HP ratio to enter fleeing (default: 0.25)
 ---@param return_ratio? number HP ratio to exit fleeing (default: 0.60)
@@ -751,7 +751,7 @@ end
 --- prompting them to navigate to and investigate the disturbance location even without direct line of sight.
 --- Invoked automatically alongside `coordination.broadcast_threat` when `def.swarm_alert` is configured.
 --- Configurable via self.swarm_alert = {enabled = true, radius = 10.0, max_allies = 3}
----@param self table Entity instance sending the alert
+---@param self MobEntity Entity instance sending the alert
 ---@param alert_pos Vector Position of the threat
 ---@param threat? number Threat magnitude (default: 5.0)
 ---@param radius? number Alert radius in nodes (default: 10.0)

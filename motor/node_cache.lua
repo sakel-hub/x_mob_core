@@ -33,7 +33,7 @@ _G._x_mob_core_node_cache_subsystem = node_cache
 
 --- Retrieves node table from per-step cache or queries engine
 ---@param pos Vector Node world position
----@return table node Node definition table {name: string, param1: number, param2: number}
+---@return MapNode node Node definition table {name: string, param1: number, param2: number}
 function node_cache.get_node(pos)
 	local hash = core.hash_node_position(pos)
 	local n = global_node_cache[hash]
@@ -46,7 +46,7 @@ end
 
 --- Retrieves node table or nil from per-step cache or queries engine
 ---@param pos Vector Node world position
----@return table|nil node Node definition table {name: string, param1: number, param2: number} or nil
+---@return MapNode|nil node Node definition table {name: string, param1: number, param2: number} or nil
 function node_cache.get_node_or_nil(pos)
 	local hash = core.hash_node_position(pos)
 	local n = global_node_or_nil_cache[hash]

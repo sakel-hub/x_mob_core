@@ -10,11 +10,20 @@ local sound = {}
 local HURT_SOUND_DEBOUNCE = 0.25
 
 --- Plays a configured sound type for a mob instance with positional attenuation and pitch variation
----@param self table|userdata Mob instance or ObjectRef
----@param sound_type string Category ("hurt", "death", "random", "attack", "alert") or technical sound name
----@param overrides? table Optional overrides (gain, distance, pitch, pos, object, to_player, loop)
+---@param self table|userdata|string|nil Mob instance, ObjectRef, or sound technical name
+---@param sound_type string|table|nil Category ("hurt", "death", "random", "attack", "alert")
+---                                    or technical sound name / overrides
+---@param overrides? SoundOverrides|table Optional overrides (gain, distance, pitch, pos, object, to_player, loop)
 ---@return integer|nil sound_handle Luanti sound handle or nil if not played
 function sound.play(self, sound_type, overrides)
+	-- Support direct invocation with sound name as first parameter:
+	-- e.g. x_mob_core.play_sound("sound_name", {pos = center, ...})
+	if type(self) == "string" then
+		overrides = (type(sound_type) == "table") and sound_type or overrides
+		sound_type = self
+		self = nil
+	end
+
 	local self_tbl = type(self) == "table" and self or nil
 	local obj = nil
 	if type(self) == "userdata" or (type(self) == "table" and self.get_pos and not self.object) then
@@ -112,10 +121,9 @@ function sound.play(self, sound_type, overrides)
 		target_pos = overrides.pos
 	else
 		-- Determine based on mob entity state
-		local is_obj_valid = obj and obj:is_valid()
 		local is_dying_or_dead = (self_tbl and (self_tbl.is_dead or self_tbl.state == "dying")) or sound_type == "death"
 
-		if is_obj_valid then
+		if obj and obj:is_valid() then
 			if is_dying_or_dead then
 				-- Play at static coordinate on death to prevent premature sound cut-off upon entity deletion
 				target_pos = obj:get_pos()

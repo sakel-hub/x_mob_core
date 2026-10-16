@@ -28,9 +28,9 @@ local function apply_liquid_safeguard(pos, vy)
 end
 
 --- Initializes an entity's swarm role, index, and state on activation
----@param self table Mob instance
----@param def table Mob definition table
----@param data table Deserialized static data table
+---@param self MobEntity Mob instance
+---@param def MobRegistrationDef Mob definition table
+---@param data? table Deserialized static data table
 function swarm.init_entity(self, def, data)
 	local cfg = def.swarm
 	if not cfg then return end
@@ -66,12 +66,12 @@ end
 
 
 --- Calculates 3D Boids spatial repulsion with anti-stacking horizontal bias
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param pos Vector World position
 
 
 --- Initializes organic multi-octave jitter and micro-dart parameters on an entity
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param idx integer Follower index
 local function ensure_flock_params(self, idx)
 	if self._flock_init then return end
@@ -97,9 +97,9 @@ local function ensure_flock_params(self, idx)
 end
 
 --- Advances micro-dart impulse vectors and calculates harmonic velocity jitter
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param cfg table Swarm configuration
+---@param cfg SwarmConfigDef Swarm configuration
 ---@return number jx
 ---@return number jy
 ---@return number jz
@@ -138,9 +138,9 @@ local function update_jitter_and_darts(self, dtime, cfg)
 end
 
 --- Advances ambient swarm idle locomotion: dynamic flocking, leader patrol, and ground contour tethering
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@return boolean is_handled
 function swarm.step_flock(self, dtime, def)
 	self.target = nil
@@ -336,10 +336,10 @@ function swarm.step_flock(self, dtime, def)
 end
 
 --- Executes standard dive attack strike with animation, sound, and horizontal recoil
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param target ObjectRef Target entity
 ---@param dir Vector Strike direction
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 function swarm.perform_attack(self, target, dir, def)
 	self.state = "attacking"
 	self.combat_mode = "orbit"
@@ -402,8 +402,8 @@ function swarm.perform_attack(self, target, dir, def)
 end
 
 --- Initializes combat holding pattern parameters
----@param self table Mob instance
----@param c_cfg table Combat configuration
+---@param self MobEntity Mob instance
+---@param c_cfg SwarmCombatDef Combat configuration
 local function ensure_combat_params(self, c_cfg)
 	if self._swarm_init then return end
 	self._swarm_init = true
@@ -449,9 +449,9 @@ local function ensure_combat_params(self, c_cfg)
 end
 
 --- Advances coordinated combat locomotion: vortex holding pattern and dive-bomb attack runs
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@return boolean is_handled
 function swarm.step_combat(self, dtime, def)
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
@@ -631,9 +631,9 @@ function swarm.step_combat(self, dtime, def)
 end
 
 --- Master step dispatcher for swarming entities
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@return boolean is_handled
 function swarm.step(self, dtime, def)
 	if self._needs_cluster_spawning then
@@ -655,8 +655,8 @@ function swarm.step(self, dtime, def)
 end
 
 --- Action end hook to transition attacking mobs back to combat walk
----@param self table Mob instance
----@param _def table Mob definition table
+---@param self MobEntity Mob instance
+---@param _def? MobRegistrationDef Mob definition table
 function swarm.on_action_end(self, _def)
 	if self.state == "attacking" then
 		self.state = "combat"

@@ -86,7 +86,7 @@ local get_water_column_bounds = utils.get_water_column_bounds
 
 --- Calculates critically damped vertical velocity toward the safe water column depth
 ---@param pos Vector Entity world position
----@param pad? table Collision padding table
+---@param pad? ShoalCollisionPadding Collision padding table
 ---@return number vy
 ---@return boolean is_shallow
 local function get_vertical_containment(pos, pad)
@@ -106,7 +106,7 @@ end
 --- Probes surrounding environment and calculates 3D repulsion away from air surface and dry land
 --- Strictly enforces a minimum 2-node buffer from any air or non-water obstacle
 ---@param pos Vector Entity world position
----@param pad? table Collision padding table
+---@param pad? ShoalCollisionPadding Collision padding table
 ---@param opt_min_y? number Optional precomputed lowest safe Y
 ---@param opt_max_y? number Optional precomputed highest safe Y
 ---@param opt_is_shallow? boolean Optional precomputed shallow flag
@@ -212,9 +212,9 @@ shoal.get_vertical_containment = get_vertical_containment
 shoal.get_water_column_bounds = get_water_column_bounds
 
 --- Derives horizontal collision radius, diameter, height, and safe distance padding from entity collisionbox
----@param self table Mob instance
----@param def table Mob definition table
----@return table pad Collision padding parameters
+---@param self MobEntity Mob instance
+---@param def MobRegistrationDef Mob definition table
+---@return ShoalCollisionPadding pad Collision padding parameters
 function shoal.get_collision_padding(self, def)
 	if self._shoal_pad then
 		return self._shoal_pad
@@ -247,9 +247,9 @@ function shoal.get_collision_padding(self, def)
 end
 
 --- Initializes an entity's shoal role, index, and state on activation
----@param self table Mob instance
----@param def table Mob definition table
----@param data table Deserialized static data table
+---@param self MobEntity Mob instance
+---@param def MobRegistrationDef Mob definition table
+---@param data? table Deserialized static data table
 function shoal.init_entity(self, def, data)
 	local cfg = def.shoal
 	if not cfg then return end
@@ -297,9 +297,9 @@ end
 
 
 --- Advances ambient swimming locomotion and lookahead boundary avoidance for the school leader
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@param pos Vector Current world position
 ---@return boolean is_handled
 function shoal.step_leader(self, dtime, def, pos)
@@ -479,9 +479,9 @@ function shoal.step_leader(self, dtime, def, pos)
 end
 
 --- Advances formation slot anchor steering and client velocity interpolation for school followers
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@param pos Vector Current world position
 ---@return boolean is_handled
 function shoal.step_follower(self, dtime, def, pos)
@@ -689,10 +689,10 @@ function shoal.step_follower(self, dtime, def, pos)
 end
 
 --- Executes predatory school strike with animation, rostrum damage, and recoil
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param target ObjectRef Target entity
 ---@param dir Vector Strike direction
----@param _def table Mob definition table
+---@param def? MobRegistrationDef Mob definition table
 function shoal.perform_attack(self, target, dir, def)
 	self.state = "attacking"
 	self.action_timer = 0.45
@@ -701,7 +701,7 @@ function shoal.perform_attack(self, target, dir, def)
 	animator.play(self.object, "attack", {speed = 1.5, loop = false})
 	sound.play(self, "attack")
 
-	local atk_dir = dir or {x = 0, y = 0, z = 1}
+	local atk_dir = dir and {x = dir.x, y = dir.y, z = dir.z} or {x = 0, y = 0, z = 1}
 	local lunge_speed = (self.pursuit_speed or 5.2) * 1.2
 
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
@@ -763,9 +763,9 @@ function shoal.perform_attack(self, target, dir, def)
 end
 
 --- Disengages an entire school or member from combat back to peaceful swimming
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@param pos Vector Current world position
 ---@return boolean is_handled
 local function disengage_shoal(self, dtime, def, pos)
@@ -792,9 +792,9 @@ local function disengage_shoal(self, dtime, def, pos)
 end
 
 --- Advances coordinated combat locomotion when school has engaged a threat
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@param pos Vector Current world position
 ---@return boolean is_handled
 function shoal.step_combat(self, dtime, def, pos)
@@ -1021,7 +1021,7 @@ function shoal.step_combat(self, dtime, def, pos)
 end
 
 --- Synchronizes threat targets across the entire school to maintain cohesion
----@param self table Mob instance
+---@param self MobEntity Mob instance
 function shoal.sync_school_threat(self)
 	if self.pack_role == "leader" then
 		if utils.is_player_alive(self.target) then
@@ -1056,9 +1056,9 @@ function shoal.sync_school_threat(self)
 end
 
 --- Master step dispatcher for schooling entities
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param dtime number Step delta time
----@param def table Mob definition table
+---@param def MobRegistrationDef Mob definition table
 ---@return boolean is_handled
 function shoal.step(self, dtime, def)
 	if self._needs_cluster_spawning then
@@ -1147,8 +1147,8 @@ function shoal.step(self, dtime, def)
 end
 
 --- Action end hook to transition attacking mobs back to swimming
----@param self table Mob instance
----@param _def table Mob definition table
+---@param self MobEntity Mob instance
+---@param _def? MobRegistrationDef Mob definition table
 function shoal.on_action_end(self, _def)
 	if self.state == "attacking" then
 		self.state = "walk"

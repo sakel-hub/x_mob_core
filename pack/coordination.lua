@@ -9,11 +9,13 @@ local coordination = {}
 local utils = dofile(core.get_modpath("x_mob_core") .. "/core/utils.lua")
 
 --- Rallies all pack followers to attack a shared target
----@param leader_self table Leader mob instance
+---@param leader_self MobEntity Leader mob instance
 ---@param target ObjectRef Target entity
+---@return integer count Number of followers rallied
 function coordination.rally_followers(leader_self, target)
 	local followers = leader_self.pack_followers
-	if not followers or not target then return end
+	if not followers or not target then return 0 end
+	local count = 0
 	for i = 1, #followers do
 		local obj = followers[i]
 		if utils.is_player_alive(obj) then
@@ -23,9 +25,11 @@ function coordination.rally_followers(leader_self, target)
 				if ent.state == "idle" or ent.state == "walk" or ent.state == "regrouping" then
 					ent.state = "combat"
 				end
+				count = count + 1
 			end
 		end
 	end
+	return count
 end
 
 --- Broadcasts alert to nearby pack members or allies when taking damage or spotting an enemy.
@@ -33,14 +37,15 @@ end
 --- Note: This is an imperative function requiring an active `ObjectRef`. Unlike declarative
 --- `swarm_alert`, it does not write coordinate memory for obscured allies, nor does it
 --- trigger automatically on death.
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param target ObjectRef Threat target
 ---@param radius? number Alert radius in nodes (default: 16.0)
 ---@param max_allies? integer Max allies to alert (default: 4)
+---@return integer alerted Count of allies alerted
 function coordination.broadcast_threat(self, target, radius, max_allies)
-	if not self.object or not self.object:is_valid() or not target then return end
+	if not self.object or not self.object:is_valid() or not target then return 0 end
 	local pos = self.object:get_pos()
-	if not pos then return end
+	if not pos then return 0 end
 
 	local rad = radius or 16.0
 	local max_cnt = max_allies or 4
@@ -73,10 +78,11 @@ function coordination.broadcast_threat(self, target, radius, max_allies)
 			end
 		end
 	end
+	return alerted
 end
 
 --- Checks if a follower has exceeded its leash distance from its leader
----@param follower_self table Follower mob instance
+---@param follower_self MobEntity Follower mob instance
 ---@return boolean is_leashed True if within leash limit, false if leashed/separated
 ---@return Vector|nil leader_pos Position of leader if valid
 ---@return number dist Distance to leader
@@ -98,7 +104,7 @@ function coordination.check_leash(follower_self)
 end
 
 --- Handles movement for a follower returning to assemble with its pack leader
----@param self table Follower mob instance
+---@param self MobEntity Follower mob instance
 ---@param dtime number Step delta time
 ---@param move_anim? string Movement animation (default: "walk")
 ---@param speed_mult? number Speed multiplier (default: 1.25)
@@ -284,12 +290,14 @@ end
 ---@param radius? number Search radius (default: 12.0)
 ---@param panic_duration? number Duration in seconds for flee state (default: 4.0)
 ---@param danger_dmg? number Perceived damage recorded in memory (default: 10)
+---@return integer panicked Number of mobs panicked
 function coordination.trigger_cowardice_panic(death_pos, mob_name, radius, panic_duration, danger_dmg)
-	if not death_pos or not mob_name then return end
+	if not death_pos or not mob_name then return 0 end
 	local rad = radius or 12.0
 	local dur = panic_duration or 4.0
 	local dmg = danger_dmg or 10
 	local nearby = core.get_objects_inside_radius(death_pos, rad)
+	local panicked = 0
 	for i = 1, #nearby do
 		local obj = nearby[i]
 		if obj and not obj:is_player() and utils.is_player_alive(obj) then
@@ -302,9 +310,11 @@ function coordination.trigger_cowardice_panic(death_pos, mob_name, radius, panic
 					x_mob_core.mob_memory.record_danger(ent, death_pos, dmg, rad + 4.0)
 					x_mob_core.mob_memory.record_fight_pos(ent, death_pos, 45.0)
 				end
+				panicked = panicked + 1
 			end
 		end
 	end
+	return panicked
 end
 
 -- Automatic pack cowardice panic listener
@@ -321,7 +331,7 @@ x_mob_core.events.listen("on_mob_death", function(mob)
 end)
 
 --- Calculates 3D multi-agent Boids spatial repulsion with anti-stacking and soft/hard buffers
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param pos Vector Current world position
 ---@param radius? number Repulsion radius (default: 2.0)
 ---@param strength? number Push force multiplier (default: 2.4)
@@ -405,7 +415,7 @@ function coordination.calculate_repulsion(self, pos, radius, strength, ignore_be
 end
 
 --- Applies a status effect or buff preset to all active living followers in a leader's pack
----@param leader_self table Leader mob entity instance
+---@param leader_self MobEntity Leader mob entity instance
 ---@param buff_def string|StatusEffectDef Buff preset identifier or status effect definition table
 ---@param options? { include_leader?: boolean, max_targets?: integer, sound?: string, vfx?: string|fun(pos: Vector) }
 ---@return integer count Number of pack entities successfully buffed
@@ -454,7 +464,7 @@ function coordination.apply_pack_buff(leader_self, buff_def, options)
 end
 
 --- Pulses a radius aura applying a positive or neutral effect to allies or pack followers
----@param caster_self table Caster mob entity instance
+---@param caster_self MobEntity Caster mob entity instance
 ---@param aura_def AuraPulseDef Aura specification table
 ---@return integer count Number of entities affected
 function coordination.pulse_aura(caster_self, aura_def)

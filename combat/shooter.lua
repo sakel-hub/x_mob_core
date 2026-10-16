@@ -122,6 +122,7 @@ function shooter.is_valid_target(source_or_proj, obj, options)
 	end
 	if not proj_name and (type(source_or_proj) == "userdata" or type(source_or_proj) == "table")
 			and source_or_proj.get_luaentity then
+		---@cast source_or_proj ObjectRef
 		local l_ent = source_or_proj:get_luaentity()
 		proj_name = l_ent and l_ent.name
 	end
@@ -248,7 +249,7 @@ function shooter.step_projectile(self, dtime, options)
 			local vel = obj:get_velocity()
 			local flight_dir
 			if vel and (vel.x ~= 0 or vel.y ~= 0 or vel.z ~= 0) then
-				flight_dir = vector.normalize(vel)
+				flight_dir = (vector.normalize and vector.normalize(vel)) or vector.direction({x = 0, y = 0, z = 0}, vel)
 			elseif old_pos and hit_pos and not vector.equals(old_pos, hit_pos) then
 				flight_dir = vector.direction(old_pos, hit_pos)
 			else

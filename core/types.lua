@@ -11,6 +11,56 @@
 -- 1. CORE PRIMITIVES & ENGINE ALIASES
 -- =========================================================================
 
+---3D Cartesian coordinate vector in Luanti node units.
+---@class Vector
+---@field x number X coordinate
+---@field y number Y coordinate
+---@field z number Z coordinate
+
+---Luanti ObjectRef userdata representing an active entity or connected player.
+---@class ObjectRef
+---@field get_pos fun(self: ObjectRef): Vector|nil
+---@field set_pos fun(self: ObjectRef, pos: Vector)
+---@field get_velocity fun(self: ObjectRef): Vector|nil
+---@field set_velocity fun(self: ObjectRef, vel: Vector)
+---@field get_acceleration fun(self: ObjectRef): Vector|nil
+---@field set_acceleration fun(self: ObjectRef, acc: Vector)
+---@field get_yaw fun(self: ObjectRef): number
+---@field set_yaw fun(self: ObjectRef, yaw: number)
+---@field get_look_horizontal fun(self: ObjectRef): number
+---@field get_look_vertical fun(self: ObjectRef): number
+---@field get_properties fun(self: ObjectRef): table
+---@field set_properties fun(self: ObjectRef, props: table)
+---@field get_luaentity fun(self: ObjectRef): MobEntity|table|nil
+---@field is_player fun(self: ObjectRef): boolean
+---@field get_player_name fun(self: ObjectRef): string
+---@field get_hp fun(self: ObjectRef): number
+---@field set_hp fun(self: ObjectRef, hp: number, reason?: any)
+---@field punch function Punches entity with tool capabilities and damage groups
+---@field remove fun(self: ObjectRef)
+---@field is_valid fun(self: ObjectRef): boolean
+---@field get_armor_groups fun(self: ObjectRef): table<string, number>
+---@field set_armor_groups fun(self: ObjectRef, groups: table<string, number>)
+---@field set_attach function Attaches entity to parent ObjectRef at specified bone and offset
+---@field get_attach fun(self: ObjectRef): ObjectRef|nil
+---@field set_detach fun(self: ObjectRef)
+---@field get_bone_position fun(self: ObjectRef, bone: string): Vector, Vector
+---@field set_bone_position fun(self: ObjectRef, bone: string, position?: Vector, rotation?: Vector)
+---@field set_physics_override fun(self: ObjectRef, overrides: table)
+---@field get_physics_override fun(self: ObjectRef): table
+---@field hud_add fun(self: ObjectRef, def: table): integer
+---@field hud_remove fun(self: ObjectRef, id: integer)
+---@field hud_change fun(self: ObjectRef, id: integer, stat: string, value: any)
+---@field get_wielded_item fun(self: ObjectRef): table
+---@field set_nametag_attributes fun(self: ObjectRef, attributes: table)
+---@field get_nametag_attributes fun(self: ObjectRef): table
+
+---Engine map node table containing technical node name and param values.
+---@class MapNode
+---@field name string Technical node name (e.g. "default:stone")
+---@field param1? integer Light level or liquid flow level (0-255)
+---@field param2? integer Wallmounted/facedir orientation or metadata (0-255)
+
 ---6-element bounding box in world coordinates: `{min_x, min_y, min_z, max_x, max_y, max_z}`.
 ---Defines physical collision boundaries or interactive selection volumes in node units.
 ---@alias Box6d number[]
@@ -215,6 +265,21 @@
 -- 3. LOCOMOTION, ABILITIES & PATHFINDING
 -- =========================================================================
 
+---Locomotion status returned by motor AI step routines.
+---@class LocomotionStatus
+---@field moving boolean Whether entity is currently in physical motion
+---@field speed number Current movement speed in nodes/second
+---@field has_los boolean Whether line-of-sight to target is unobstructed
+
+---Surface contact information evaluated by surface climbing subsystem.
+---@class SurfaceInfo
+---@field has_surface boolean Whether an adjacent surface was detected
+---@field normal Vector Contact surface normal vector
+---@field surface_type "floor"|"wall"|"ceiling"|string Classification of detected surface
+
+---Movement abilities and environmental capabilities for pathfinding and safety checks.
+---@alias MobAbilities MobMovementDef
+
 ---Locomotion traversal abilities, physical constraints, and routing options.
 ---Passed to pathfinder functions (`find_path`, `find_path_sync`) and safety locomotion.
 ---@class MobMovementDef
@@ -348,12 +413,21 @@
 ---@field repulsion_strength? number Anti-stacking separation push multiplier (default: 2.2)
 ---@field separation_padding? number Extra distance padding added on top of collisionbox diameter (default: 0.5)
 
+---Collision padding boundaries for shoal members.
+---@class ShoalCollisionPadding
+---@field min_x number Negative X boundary padding
+---@field max_x number Positive X boundary padding
+---@field min_y number Negative Y boundary padding
+---@field max_y number Positive Y boundary padding
+---@field min_z number Negative Z boundary padding
+---@field max_z number Positive Z boundary padding
+
 ---Configuration options for pulsing or applying buffs to pack members via x_mob_core.apply_pack_buff.
 ---@class PackBuffOptions
 ---@field include_leader? boolean Whether the buff applies to the leader in addition to followers (default: true)
 ---@field max_targets? integer Maximum number of pack entities affected (default: all)
 ---@field sound? string Audio cue played at caster position
----@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+---@field vfx? string|fun(pos: Vector, self?: MobEntity) Visual effect trigger or callback
 
 ---Configuration options for cowardice panic triggers on pack member death.
 ---@class CowardicePanicOptions
@@ -369,7 +443,7 @@
 ---@field target? "pack_followers"|"allies"|"self" Beneficiary selector (default: "pack_followers")
 ---@field max_targets? integer Maximum number of affected targets
 ---@field sound? string Audio cue played at caster position
----@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+---@field vfx? string|fun(pos: Vector, self?: MobEntity) Visual effect trigger or callback
 
 -- =========================================================================
 -- 6. COMBAT, DAMAGE, FACTIONS & LOOT
@@ -679,7 +753,7 @@
 ---@field type? "slow"|"root"|"dot"|"debuff"|"buff"|"custom" Effect archetype ("root" halts movement and jump)
 ---@field category? "buff"|"debuff" Polarity category for cleansing and dispelling
 ---@field chance? number Optional trigger chance (fraction 0.0-1.0 or percentage 1-100; default: 100%)
----@field duration number Duration in seconds
+---@field duration? number Duration in seconds
 ---@field speed_factor? number Movement speed fractional multiplier (e.g. 0.5 for 50% slow, 1.35 for haste)
 ---@field jump_factor? number Jump fractional multiplier (e.g. 0.0 to prevent jump)
 ---@field gravity_factor? number Gravity fractional multiplier
@@ -699,7 +773,7 @@
 ---@field penetrate_armor? boolean Whether DoT bypasses armor damage reduction (default: true)
 ---Particle spawner definition or generator callback for periodic ticks.
 ---@field particle_spawner? ParticleSpawnerDef|fun(target: ObjectRef): ParticleSpawnerDef
----@field envelop? EnvelopConfig Visual envelop configuration
+---@field envelop? EnvelopConfig|boolean Visual envelop configuration
 ---@field envelop_texture? string Visual envelop sleeve texture asset
 ---@field hud_vignette? string|VignetteConfig Fullscreen responsive screen vignette configuration
 ---@field cleanse_in_water? boolean Whether immersion in water immediately cleanses the effect
@@ -716,6 +790,9 @@
 ---@field token string|integer Cancellation and refresh token
 ---@field has_envelop boolean Whether an envelop entity was attached
 ---@field target ObjectRef Target entity or player
+---@field spawner_id? integer Particle spawner identifier
+---@field spawner_playername? string Player name for player-bound particle spawner
+---@field _punch_caps? ToolCapabilities Precomputed tool capabilities for DoT punch
 
 ---Luanti particle spawner definition table.
 ---Supports structured range bounds, Brownian jitter, drag physics, and texture pools.
@@ -753,7 +830,7 @@
 ---@field target? "pack_followers"|"allies"|"self" Target filter selector (default: "pack_followers")
 ---@field effect string|StatusEffectDef Effect preset name or custom definition
 ---@field sound? string Audio cue played at caster position
----@field vfx? string|fun(pos: Vector) Declarative VFX preset or callback
+---@field vfx? string|fun(pos: Vector, self?: MobEntity) Declarative VFX preset or callback
 ---@field max_targets? integer Maximum number of affected targets
 
 ---Reactive HP threshold trigger for boss phase shifts or rage mechanics.
@@ -764,7 +841,7 @@
 ---@field cleanse? boolean Whether to automatically purge debuffs upon triggering
 ---@field effect? string|StatusEffectDef Effect preset name or custom definition
 ---@field sound? string Audio cue played on trigger
----@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+---@field vfx? string|fun(pos: Vector, self?: MobEntity) Visual effect trigger or callback
 
 ---Event-driven reaction triggered by taking damage.
 ---@class MobTriggerDef
@@ -775,7 +852,7 @@
 ---@field cleanse? boolean Whether to automatically purge debuffs upon triggering
 ---@field effect? string|StatusEffectDef Effect preset name or custom definition
 ---@field sound? string Audio cue played on trigger
----@field vfx? string|fun(pos: Vector) Visual effect trigger or callback
+---@field vfx? string|fun(pos: Vector, self?: MobEntity) Visual effect trigger or callback
 
 ---Declarative buffs, periodic auras, HP thresholds, and event triggers.
 ---@class MobBuffsDef
@@ -1115,7 +1192,8 @@
 ---@field transitions? StateTransitionDef[] Declarative state transition rules
 ---@field hooks? table<string, fun(self: MobEntity, ...: any)> Lifecycle hook callbacks
 ---@field custom_step? CustomStepHandler Pre-combat custom ability hook (return true to intercept)
----@field on_activate? fun(self: MobEntity, staticdata: string, dtime_s: number, raw?: string) Called on activation
+---Callback invoked when entity activates.
+---@field on_activate? fun(self: MobEntity, staticdata?: string|table, dtime_s?: number, raw?: string|table)
 ---Callback on each physics and logic step.
 ---@field on_step? fun(self: MobEntity, dtime: number, moveresult?: EngineMoveResult)
 ---@field on_punch? MobPunchCallback Callback invoked when entity is punched
@@ -1165,11 +1243,23 @@
 ---@field swarm SwarmSubsystem Aerial Boids flocking and dive-bombing
 ---@field shoal ShoalSubsystem Aquatic schooling formation steering
 
+---Universal combat punch intake and death handler subsystem.
+---@class CombatHandlerSubsystem
+---@field apply_death_settling_physics fun(self: MobEntity)
+---@field handle_lethal_death function Dispatches lethal death transition
+---@field handle_punch function Universal combat punch intake handler
+---@field apply_environmental_damage function Applies environmental damage
+
+---Environmental hazard subsystem.
+---@class EnvironmentSubsystem
+---@field step function Throttled environmental hazard step processor
+
 ---Lifecycle entity wrapper, state machine, and environmental hazard container.
 ---@class MobLifecycleSubsystems
 ---@field state_machine StateMachineSubsystem Extensible state machine coordinator
 ---@field entity_wrapper EntityWrapperSubsystem Registration wrapper and physics standardization
 ---@field environment EnvironmentSubsystem Environmental hazards (lava, drowning, suffocation)
+---@field combat_handler CombatHandlerSubsystem Universal punch intake and death handler
 
 local types = {}
 return types

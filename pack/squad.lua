@@ -16,7 +16,7 @@ local is_walkable_node = utils.is_walkable_node
 local get_water_column_bounds = utils.get_water_column_bounds
 
 --- Registers an entity as a pack leader
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param config MobPackDef Pack options
 function squad.init_leader(self, config)
 	if not self.pack_id then
@@ -29,7 +29,7 @@ function squad.init_leader(self, config)
 end
 
 --- Registers an entity as a pack follower/member
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param config MobPackDef Pack options
 function squad.init_member(self, config)
 	self.pack_role = "member"
@@ -40,9 +40,9 @@ function squad.init_member(self, config)
 end
 
 --- Cleans invalid/dead follower objects from a leader's roster in-place without table allocations
----@param self table Leader mob instance
+---@param self MobEntity Leader mob instance
 ---@return integer count
----@return table alive_followers
+---@return ObjectRef[] alive_followers
 function squad.clean_followers(self)
 	local followers = self.pack_followers
 	if not followers then
@@ -80,7 +80,7 @@ function squad.clean_followers(self)
 end
 
 --- Registers a follower under a leader
----@param self table Leader mob instance
+---@param self MobEntity Leader mob instance
 ---@param follower_obj ObjectRef Follower entity object
 ---@param force? boolean If true, bypasses max_followers capacity limit (default: false)
 ---@return boolean added True if follower was newly registered or reconfirmed, false if full or invalid
@@ -131,17 +131,19 @@ function squad.add_follower(self, follower_obj, force)
 end
 
 --- Removes a follower object from a leader's roster
----@param self table Leader mob instance
+---@param self MobEntity Leader mob instance
 ---@param follower_obj ObjectRef Follower entity object
+---@return boolean removed True if follower was found and removed
 function squad.remove_follower(self, follower_obj)
 	local followers = self.pack_followers
-	if not followers or not follower_obj then return end
+	if not followers or not follower_obj then return false end
 	for i = #followers, 1, -1 do
 		if followers[i] == follower_obj then
 			table.remove(followers, i)
-			break
+			return true
 		end
 	end
+	return false
 end
 
 local function matches_follower_type(expected, name)
@@ -156,15 +158,16 @@ local function matches_follower_type(expected, name)
 end
 
 --- Leader searches nearby area to adopt orphans or re-link separated followers
----@param self table Leader mob instance
+---@param self MobEntity Leader mob instance
 ---@param search_radius? number Radius to search (default: 32.0)
+---@return integer count Total count of followers in pack after adoption
 function squad.adopt_nearby_orphans(self, search_radius)
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
-	if not pos then return end
+	if not pos then return 0 end
 
 	local count = squad.clean_followers(self)
 	local max_fol = self.pack_max_followers or 3
-	if count >= max_fol then return end
+	if count >= max_fol then return count end
 
 	local radius = search_radius or 32.0
 	local nearby = core.get_objects_inside_radius(pos, radius)
@@ -203,10 +206,11 @@ function squad.adopt_nearby_orphans(self, search_radius)
 			end
 		end
 	end
+	return count
 end
 
 --- Disbands the pack and notifies all followers when the leader dies
----@param self table Leader mob instance
+---@param self MobEntity Leader mob instance
 function squad.handle_leader_death(self)
 	local followers = self.pack_followers
 	if not followers then return end
@@ -255,25 +259,26 @@ function squad.handle_leader_death(self)
 end
 
 --- Adopts nearby orphans and spawns missing followers radially around the leader
----@param self table Leader mob instance
----@param follower_type? string|table Entity technical name (default: self.pack_follower_type)
+---@param self MobEntity Leader mob instance
+---@param follower_type? string|string[] Entity technical name (default: self.pack_follower_type)
 ---@param max_count? integer Target follower count (default: self.pack_max_followers or 3)
 ---@param spawn_radius? number Radial spawn distance (default: 1.5)
+---@return integer spawned Number of followers spawned
 function squad.spawn_initial_followers(self, follower_type, max_count, spawn_radius)
 	local pos = self.object and self.object:is_valid() and self.object:get_pos()
-	if not pos then return end
+	if not pos then return 0 end
 
 	squad.adopt_nearby_orphans(self, 32.0)
 	local count = squad.clean_followers(self)
 
 	local target_type = follower_type or self.pack_follower_type
-	if not target_type then return end
+	if not target_type then return 0 end
 
 	local max_fol = max_count or self.pack_max_followers or 3
+	local spawned_count = 0
 	if count < max_fol then
 		local needed = max_fol - count
 		local rad = spawn_radius or 1.5
-		local spawned_count = 0
 		local last_spawn_type = nil
 		for i = 1, needed do
 			local angle = (i / needed) * math.pi * 2
@@ -325,12 +330,13 @@ function squad.spawn_initial_followers(self, follower_type, max_count, spawn_rad
 		end
 	end
 	self.spawned_followers = true
+	return spawned_count
 end
 
 --- Spawns missing follower peers/members radially around the cluster leader
 --- Single unified engine method supporting aquatic shoals, airborne swarms, and ground squads
----@param self table Leader mob instance
----@param def table Mob definition table
+---@param self MobEntity Leader mob instance
+---@param def MobRegistrationDef Mob definition table
 function squad.spawn_cluster(self, def)
 	local cfg = def.shoal or def.swarm or def.pack or {}
 	local total_size = cfg.size or (def.pack and def.pack.max_followers and (def.pack.max_followers + 1)) or 5
@@ -459,7 +465,7 @@ function squad.spawn_cluster(self, def)
 end
 
 --- Follower searches nearby area to re-link with its pack leader if separated
----@param self table Follower mob instance
+---@param self MobEntity Follower mob instance
 ---@param search_radius? number Radius to search (default: 32.0)
 ---@return boolean linked True if successfully re-linked
 function squad.relink_follower(self, search_radius)
@@ -515,7 +521,7 @@ function squad.relink_follower(self, search_radius)
 end
 
 --- Democratic leader election: promotes the first surviving follower in-place
----@param self table Mob instance (dying leader or surviving follower)
+---@param self MobEntity Mob instance (dying leader or surviving follower)
 ---@param search_radius? number Radius to search for surviving members (default: 24.0)
 ---@return boolean success True if a new leader was established
 function squad.elect_successor(self, search_radius)

@@ -22,7 +22,7 @@ local shooter = dofile(modpath .. "/combat/shooter.lua")
 local is_valid_living_player = utils.is_player_alive
 
 --- Determines if mob is in active pursuit of a living target
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@return boolean is_pursuing
 function locomotion.get_pursuit_state(self)
 	if self.is_pursuing ~= nil then
@@ -75,7 +75,7 @@ function locomotion.safe_set_rotation(obj, rot)
 end
 
 --- Calculates vertical velocity and applies buoyancy acceleration when navigating liquids
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param current_y number Current mob vertical position
 ---@param target_y number Desired waypoint/target vertical position
 ---@param is_subm boolean True if submerged
@@ -97,7 +97,7 @@ function locomotion.calculate_liquid_vertical_velocity(self, current_y, target_y
 end
 
 --- Applies active water buoyancy and partial submersion floating physics for swimming mobs
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
 ---@return boolean in_liquid True if mob is currently inside a liquid node
 ---@return boolean is_submerged True if mob is submerged below target swimming waterline
@@ -172,7 +172,7 @@ function locomotion.apply_liquid_buoyancy(self, dtime)
 end
 
 --- Halts horizontal velocity while preserving vertical motion/gravity and liquid buoyancy
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 function locomotion.halt_horizontal_velocity(self)
 	if not self or not self.object or not self.object:is_valid() then return end
 	local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
@@ -184,7 +184,7 @@ function locomotion.halt_horizontal_velocity(self)
 end
 
 --- Computes effective movement speed for a mob incorporating status effects (buffs/slows)
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param base_speed number Base locomotion speed
 ---@return number effective_speed Multiplied speed
 function locomotion.get_effective_speed(self, base_speed)
@@ -194,7 +194,7 @@ function locomotion.get_effective_speed(self, base_speed)
 end
 
 --- Sets horizontal velocity of a mob entity along a given yaw while preserving vertical motion/gravity
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param speed number Horizontal movement speed
 ---@param yaw number Orientation angle in radians
 function locomotion.set_horizontal_velocity(self, speed, yaw)
@@ -212,7 +212,7 @@ end
 
 
 --- Detects if entity has collided with a wall/solid obstacle or is physically stagnant against one
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param current_pos Vector Current world position
 ---@param dtime number Delta time
 ---@return boolean is_colliding Whether the mob is colliding with a wall
@@ -275,7 +275,7 @@ end
 --- to prevent clipping and merging into each other.
 --- Respects surface orientation (tangent projection on walls/ceilings).
 --- Throttled to 100ms per entity to ensure zero performance overhead on multiplayer servers.
----@param self table Mob entity state
+---@param self MobEntity Mob entity state
 ---@param current_pos Vector Mob position
 ---@param dtime number Server step delta time
 ---@param on_surface boolean True if mob is on wall or ceiling
@@ -349,7 +349,7 @@ function locomotion.calculate_separation_force(self, current_pos, dtime, on_surf
 end
 
 --- Handles physical movement and steering toward the next path waypoint
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
 ---@param current_pos Vector Current mob world position
 ---@param next_waypoint Vector Target node world position
@@ -577,17 +577,20 @@ function locomotion.handle_mob_movement(self, dtime, current_pos, next_waypoint)
 end
 
 --- Updates autonomous local wandering and idling when mob is not pursuing a target
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
----@param current_pos Vector Current mob world position
+---@param current_pos? Vector Current mob world position
 ---@param on_wall_or_ceiling boolean Whether mob is adhering to wall/ceiling
----@return table status Locomotion status {moving = boolean, speed = number, has_los = boolean}
+---@return LocomotionStatus status Locomotion status {moving = boolean, speed = number, has_los = boolean}
 function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ceiling)
 	if not self.abilities or not self._inherent_abilities then
 		safety.init_abilities(self)
 	end
-	if type(current_pos) ~= "table" and self.object and self.object:is_valid() then
+	if (type(current_pos) ~= "table" or not current_pos) and self.object and self.object:is_valid() then
 		current_pos = self.object:get_pos()
+	end
+	if not current_pos then
+		return {moving = false, speed = 0, has_los = false}
 	end
 	local is_aquatic = safety.is_aquatic_mob(self)
 	local in_liquid, is_subm, _, target_vy = safety.check_in_liquid(
@@ -925,11 +928,11 @@ function locomotion.handle_mob_wandering(self, dtime, current_pos, on_wall_or_ce
 end
 
 --- Updates tactical fleeing behavior away from danger/threat sources
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
 ---@param current_pos Vector Current mob world position
 ---@param on_wall_or_ceiling boolean Whether mob is adhering to wall/ceiling
----@return table status Locomotion status {moving = boolean, speed = number, has_los = boolean}
+---@return LocomotionStatus status Locomotion status {moving = boolean, speed = number, has_los = boolean}
 function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceiling)
 	if not self.abilities or not self._inherent_abilities then
 		safety.init_abilities(self)
@@ -1196,13 +1199,14 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 			local inv_s2 = 0.70710678
 
 			local cands = {}
-			local has_norm = f_wall_norm and (f_wall_norm.x ~= 0 or f_wall_norm.z ~= 0)
 			local nx, nz = 0, 0
-			if has_norm then
+			local has_norm = false
+			if f_wall_norm and (f_wall_norm.x ~= 0 or f_wall_norm.z ~= 0) then
 				local nlen = math.sqrt(f_wall_norm.x * f_wall_norm.x + f_wall_norm.z * f_wall_norm.z)
 				if nlen > 0.001 then
 					nx = f_wall_norm.x / nlen
 					nz = f_wall_norm.z / nlen
+					has_norm = true
 					cands[#cands + 1] = {x = -nz, y = 0, z = nx, is_tangent = true}
 					cands[#cands + 1] = {x = nz, y = 0, z = -nx, is_tangent = true}
 				end
@@ -1337,7 +1341,7 @@ function locomotion.handle_mob_fleeing(self, dtime, current_pos, on_wall_or_ceil
 end
 
 --- Executes a safe kiting retreat away from a target position with cliff/obstacle guard
----@param self table Mob instance
+---@param self MobEntity Mob instance
 ---@param target_pos Vector Threat / target world position
 ---@param speed? number Movement speed (default: self.pursuit_speed or self.walk_speed or 3.0)
 ---@param face_away? boolean If true, sets facing yaw towards chosen retreat escape direction instead of facing target
@@ -1439,10 +1443,10 @@ end
 --- Advances tactical retreat, standoff kiting, and close-quarters retaliation for fleeing mobs.
 --- Unifies forward-sprint escape locomotion, 180° standoff projectile kiting, and close-quarters
 --- melee retaliation when cornered or caught.
----@param self table Entity instance
+---@param self MobEntity Entity instance
 ---@param dtime number Step delta time
----@param def? table Entity definition table
----@param _moveresult? table Engine move result
+---@param def? MobRegistrationDef Entity definition table
+---@param _moveresult? EngineMoveResult Engine move result
 ---@return boolean handled True if tactical retreat handled this step
 function locomotion.step_tactical_retreat(self, dtime, def, _moveresult)
 	if not self or not self.object or not self.object:is_valid() then
@@ -1478,10 +1482,8 @@ function locomotion.step_tactical_retreat(self, dtime, def, _moveresult)
 	if not pos then return false end
 
 	local target = self.target
-	local has_living_target = target and utils.is_player_alive(target)
-
 	-- If no living target, retreat away from environmental danger/threat memory
-	if not has_living_target then
+	if not target or not utils.is_player_alive(target) then
 		local flee_anim = (def.animations and def.animations.flee and "flee")
 			or (def.animations and def.animations.run and "run") or "walk"
 		animator.play(self.object, flee_anim, {speed = 1.25, loop = true})

@@ -14,7 +14,7 @@ local sound = dofile(modpath .. "/audio/sound.lua")
 local factions = dofile(modpath .. "/combat/factions.lua")
 
 ---Checks whether a target is valid for a melee strike
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param target ObjectRef Target object to test
 ---@return boolean is_valid
 function melee.is_valid_target(self, target)
@@ -42,11 +42,11 @@ function melee.is_valid_target(self, target)
 end
 
 ---Executes an instantaneous melee strike on target
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param target ObjectRef Target entity
 ---@param dir Vector Strike impulse direction
----@param def table Mob definition table
----@param m_cfg table Melee configuration table
+---@param def MobRegistrationDef Mob definition table
+---@param m_cfg? MeleeConfigDef|MeleeAttackDef Melee configuration table
 function melee.perform_attack(self, target, dir, def, m_cfg)
 	if def.perform_attack then
 		def.perform_attack(self, target, dir)
@@ -70,9 +70,9 @@ function melee.perform_attack(self, target, dir, def, m_cfg)
 end
 
 ---Universal step handler for melee attacks
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param _dtime number Step delta time
----@param def table Entity definition table
+---@param def MobRegistrationDef Entity definition table
 ---@return boolean handled True if the melee logic handled or intercepted combat
 function melee.step(self, _dtime, def)
 	if not self.target or not melee.is_valid_target(self, self.target) then
@@ -83,7 +83,8 @@ function melee.step(self, _dtime, def)
 	local tpos = self.target:get_pos()
 	if not pos or not tpos then return false end
 
-	local m_cfg = type(def.melee) == "table" and def.melee or {}
+	local m_cfg = (type(def.melee) == "table" and def.melee or {})
+	---@cast m_cfg MeleeConfigDef
 	local reach = m_cfg.range or def.attack_range or 2.0
 	local max_h_diff = m_cfg.max_height_diff or 2.0
 
@@ -117,6 +118,7 @@ function melee.step(self, _dtime, def)
 
 	-- Attack execution
 	if (self.attack_cooldown or 0) <= 0 then
+		---@type MeleeAttackDef|MeleeConfigDef
 		local active_attack = m_cfg
 		if m_cfg.attacks and #m_cfg.attacks > 0 then
 			local total_weight = 0

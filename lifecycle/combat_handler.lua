@@ -23,7 +23,7 @@ local health_bar = dofile(modpath .. "/combat/health_bar.lua")
 local ZERO_VECTOR = { x = 0, y = 0, z = 0 }
 
 ---Applies death settling physics, anchoring the dying entity to walkable ground without vibration.
----@param self table Entity instance
+---@param self MobEntity Entity instance
 function combat_handler.apply_death_settling_physics(self)
 	if not self.object or not self.object:is_valid() then return end
 	local on_ground = self._moveresult and self._moveresult.touching_ground
@@ -45,11 +45,11 @@ function combat_handler.apply_death_settling_physics(self)
 end
 
 ---Dispatches the lethal death transition on a mob.
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param puncher? ObjectRef Killer object reference
 ---@param dir? Vector Strike direction
 ---@param dmg number Final damage dealt
----@param def table Entity definition table
+---@param def MobRegistrationDef Entity definition table
 function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 	self.is_dead = true
 	self.state = "dying"
@@ -117,13 +117,13 @@ function combat_handler.handle_lethal_death(self, puncher, dir, dmg, def)
 end
 
 ---Universal combat punch intake handler.
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param puncher ObjectRef Attacking entity
 ---@param time_from_last_punch number Elapsed time
----@param tool_capabilities table Weapon capabilities
+---@param tool_capabilities ToolCapabilities Weapon capabilities
 ---@param dir Vector Punch impulse direction
 ---@param damage number Base damage
----@param def table Entity definition table
+---@param def? MobRegistrationDef Entity definition table
 ---@return boolean handled
 function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_capabilities, dir, damage, def)
 	def = def or self._def or (self.name and core.registered_entities[self.name]) or {}
@@ -281,10 +281,13 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 						sound.play(self, trig.sound)
 					end
 					if trig.vfx then
-						if type(trig.vfx) == "function" then
-							trig.vfx(self.object:get_pos(), self)
-						elseif type(trig.vfx) == "string" and effects and effects.play_preset then
-							effects.play_preset(trig.vfx, self.object:get_pos())
+						local vpos = self.object and self.object:is_valid() and self.object:get_pos()
+						if vpos then
+							if type(trig.vfx) == "function" then
+								trig.vfx(vpos, self)
+							elseif type(trig.vfx) == "string" and effects and effects.play_preset then
+								effects.play_preset(trig.vfx, vpos)
+							end
 						end
 					end
 				end
@@ -337,10 +340,10 @@ function combat_handler.handle_punch(self, puncher, time_from_last_punch, tool_c
 end
 
 ---Applies environmental damage (lava, fire, drowning, suffocation) to a mob.
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param dmg number Damage amount
 ---@param damage_type string Type of damage ("lava", "fire", "drowning", "suffocation", etc.)
----@param def table Entity definition table
+---@param def? MobRegistrationDef Entity definition table
 ---@return boolean lethal True if mob died from the damage
 function combat_handler.apply_environmental_damage(self, dmg, damage_type, def)
 	def = def or self._def or (self.name and core.registered_entities[self.name]) or {}

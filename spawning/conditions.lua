@@ -13,7 +13,7 @@ local SPAWN_MAX_DIST = 45
 conditions.MAX_TOTAL_RADIUS_MOBS = 8
 
 --- Checks whether an entity represents a living mob rather than a dropped item or non-mob entity
----@param ent table LuaEntity table
+---@param ent MobEntity|table LuaEntity table
 ---@return boolean
 local function is_mob_entity(ent)
 	if not ent or not ent.name then return false end

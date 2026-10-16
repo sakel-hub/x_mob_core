@@ -95,7 +95,7 @@ end
 
 --- Checks if a world position or coordinate represents a loaded, non-walkable passable node.
 ---@param pos_or_x Vector|number World position table or X coordinate
----@param y? number Y coordinate
+---@param y? number|boolean Y coordinate or allow_liquid if pos_or_x is Vector
 ---@param z? number Z coordinate
 ---@param allow_liquid? boolean If true, liquid nodes are treated as passable
 ---@return boolean is_passable
@@ -106,7 +106,7 @@ function utils.is_passable_node(pos_or_x, y, z, allow_liquid)
 		scratch_water_probe.x = math.floor(pos_or_x.x + 0.5)
 		scratch_water_probe.y = math.floor(pos_or_x.y + 0.5)
 		scratch_water_probe.z = math.floor(pos_or_x.z + 0.5)
-		check_liq = y
+		check_liq = not not y
 	else
 		scratch_water_probe.x = math.floor(pos_or_x + 0.5)
 		scratch_water_probe.y = math.floor(y + 0.5)

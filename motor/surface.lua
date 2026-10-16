@@ -118,7 +118,7 @@ surface.DEFAULT_SELBOX = {-0.85, -0.65, -0.85, 0.85, 0.65, 0.85}
 --- Returns surface info table or nil if entity is floating in mid-air.
 ---@param pos Vector World position
 ---@param preferred_normal? Vector Previous surface normal for geometric hysteresis
----@return table|nil surface_info {has_surface = boolean, normal = Vector, surface_type = string}
+---@return SurfaceInfo|nil surface_info Table with has_surface, normal, and surface_type
 function surface.find_adjacent_surface(pos, preferred_normal)
 	local cx = pos.x
 	local cy = pos.y
@@ -217,7 +217,7 @@ end
 
 --- Applies crawler surface attachment or detachment state, updating gravity, surface normal,
 --- collisionbox/selectionbox properties, and depenetrating from floor nodes when switching to wall cbox.
----@param self table Mob entity instance
+---@param self MobEntity Mob entity instance
 ---@param on_surface boolean True if attaching to wall/ceiling, false if on floor or airborne
 ---@param normal? Vector Active surface normal (or nil when airborne)
 ---@param current_pos? Vector Current entity position (updated in-place if depenetrated)
