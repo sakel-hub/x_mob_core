@@ -30,4 +30,6 @@ All textures, models, and artwork created specifically for Luanti by SaKeL (MIT 
 - textures/x_mob_core_sparkle.png: Original 16x16 4-point sparkle particle texture for critical hits and status procs.
 - textures/x_mob_core_star.png: Original 16x16 5-point star particle texture for buff indicators and status effects.
 - models/x_mob_core_envelop_box.glb: Original animated 3D sleeve mesh with harmonic radial breathing pulse for status effect envelopment.
+- assets/x_mob_core_envelop_box.blend: Original source Blender file containing rigged mesh, armature hierarchy, and pulse animation.
+- assets/poster.blend: Original 3D scene file for rendering promotional banners and blueprint showcase imagery.
 - screenshot.png: Blueprint showcase promotional artwork and documentation banner.
