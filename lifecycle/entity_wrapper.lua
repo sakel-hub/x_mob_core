@@ -130,6 +130,12 @@ end)
 
 -- Priority 17: Tactical Retreat & Cornered Retaliation Hook
 pipeline.register_step_hook("tactical_retreat", 17, function(self, dtime, def, moveresult)
+	local can_flee = (self.can_flee ~= false) and (not def or def.can_flee ~= false)
+		and (not self.health_regen or self.health_regen.can_flee ~= false)
+	if not can_flee then
+		return false
+	end
+
 	local is_fleeing = (self.state == "fleeing")
 		or (self.state == "channeling")
 		or (self.panic_timer and self.panic_timer > 0)
@@ -604,7 +610,8 @@ function entity_wrapper.register_mob(name, def)
 		self.combat_hover_offset = def.combat_hover_offset
 		self.flight_elevation = def.flight_elevation or def.hover_offset
 		self.combat_standoff = def.combat_standoff
-		-- Health regeneration
+		-- Health regeneration & fleeing
+		self.can_flee = (def.can_flee ~= false) and (not def.health_regen or def.health_regen.can_flee ~= false)
 		self.health_regen = def.health_regen
 		self.on_regen_step = def.on_regen_step
 		self.on_return_to_fight = def.on_return_to_fight

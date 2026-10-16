@@ -278,8 +278,9 @@ function properties.resolve_mob_properties(def)
 	local overlay = (hr_table.overlay ~= false)
 	local overlay_color = hr_table.overlay_color or "^[colorize:#FFFFFF60"
 
+	local can_flee = (def.can_flee ~= false) and (hr_table.can_flee ~= false)
 	local flee_threshold
-	if hr_table.can_flee == false then
+	if not can_flee then
 		flee_threshold = 0
 	elseif hr_table.flee_threshold ~= nil then
 		flee_threshold = hr_table.flee_threshold
@@ -307,8 +308,10 @@ function properties.resolve_mob_properties(def)
 	local max_flee_dist = tonumber(hr_table.max_flee_distance) or tonumber(def.max_flee_distance) or 15.0
 
 	-- Canonical single source of truth table
+	def.can_flee = can_flee
 	def.health_regen = {
 		enabled = enabled,
+		can_flee = can_flee,
 		rate = rate,
 		passive = passive,
 		overlay = overlay,

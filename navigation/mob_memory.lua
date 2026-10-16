@@ -666,9 +666,23 @@ function mob_memory.update_health_regen(self, dtime, flee_ratio, return_ratio, r
 	if return_ratio ~= nil then return_thresh = max_hp * return_ratio end
 	if regen_rate ~= nil then rate = regen_rate end
 
+	-- Determine whether mob is allowed to flee
+	local can_flee = (self.can_flee ~= false) and (not self._def or self._def.can_flee ~= false)
+		and (not hr or hr.can_flee ~= false)
+		and ((hr and hr.unlimited_flee == true) or not self._flee_used)
+
+	if not can_flee then
+		flee_thresh = 0
+		if mem.flee_state then
+			mem.flee_state = false
+		end
+		if self.state == "fleeing" then
+			self.state = "idle"
+		end
+	end
+
 	-- Enter fleeing if HP drops below threshold (1-time limit for tactical disengage, continuous for unlimited_flee)
 	if flee_thresh > 0 and not mem.flee_state and cur_hp <= flee_thresh and cur_hp > 0 then
-		local can_flee = (not hr or hr.can_flee ~= false) and ((hr and hr.unlimited_flee == true) or not self._flee_used)
 		if can_flee then
 			mem.flee_state = true
 			if self.state ~= "flinching" then

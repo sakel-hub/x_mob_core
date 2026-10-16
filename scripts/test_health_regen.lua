@@ -571,6 +571,38 @@ do
 		"Health bar entity is attached and updated upon health regeneration")
 end
 
+-- TEST 13: can_flee = false with health_regen = false (e.g. ambient or fearless mobs)
+do
+	local def_no_flee = {
+		initial_properties = { hp_max = 20 },
+		can_flee = false,
+		health_regen = false,
+	}
+	properties.resolve_mob_properties(def_no_flee)
+	assert_test(def_no_flee.can_flee == false, "can_flee = false is preserved on def")
+	assert_test(def_no_flee.health_regen.can_flee == false, "can_flee = false is stored in canonical health_regen")
+	assert_test(def_no_flee.health_regen.flee_threshold == 0, "flee_threshold is 0 when can_flee = false")
+
+	local mock_obj = make_mock_object(2, 20)
+	local mob = {
+		hp = 2,
+		hp_max = 20,
+		state = "idle",
+		can_flee = false,
+		health_regen = def_no_flee.health_regen,
+		_def = def_no_flee,
+		object = mock_obj,
+	}
+	mock_obj._luaentity = mob
+	mob_memory.init_memory(mob)
+
+	local is_fleeing = mob_memory.update_health_regen(mob, 1.0)
+	assert_test(is_fleeing == false and mob.state == "idle",
+		"Mob with can_flee = false never enters fleeing state on low HP")
+	assert_test(mob.memory.flee_state == false,
+		"Mob with can_flee = false does not set memory.flee_state on low HP")
+end
+
 print("==================================================")
 print(string.format("  Test Summary: %d / %d Passed (%.1f%%)",
 	passed_tests, total_tests, (passed_tests / total_tests) * 100))
