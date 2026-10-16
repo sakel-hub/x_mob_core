@@ -19,3 +19,6 @@ x_mob_core_health_bar_auto_remove (Auto-remove Inactive Health Bar Entities) boo
 
 # Enable responsive fullscreen HUD status screen vignettes (e.g. spores, void miasma)
 x_mob_core_enable_hud_vignettes (Enable HUD Status Vignettes) bool true
+
+# Safe radius in nodes around static_spawnpoint where mobs will not spawn (0 to disable)
+x_mob_spawn_protect_radius (Safe Spawn Hub Radius) int 32 0 256

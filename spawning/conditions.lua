@@ -65,6 +65,20 @@ conditions.count_mobs_in_radius = count_mobs_in_radius
 function conditions.check(pos, def, is_mapgen, skip_density)
 	-- Verify time of day limits (ultra-fast scalar check before spatial queries)
 	if not is_mapgen then
+		-- Enforce area protection: do not spawn inside player claims or protected land
+		if core.is_protected(pos, "") then
+			return false
+		end
+
+		-- Enforce safe hub perimeter around world static spawnpoint
+		local static_sp = core.setting_get_pos("static_spawnpoint")
+		if static_sp then
+			local safe_radius = tonumber(core.settings:get("x_mob_spawn_protect_radius")) or 32
+			if safe_radius > 0 and vector.distance(pos, static_sp) < safe_radius then
+				return false
+			end
+		end
+
 		local tod = core.get_timeofday()
 		if tod then
 			if def.day_only and (tod < 0.20 or tod > 0.80) then

@@ -108,6 +108,9 @@ _G.core = {
 		return { x = -math.sin(yaw), y = 0, z = math.cos(yaw) }
 	end,
 	line_of_sight = function() return true end,
+	is_protected = function() return false end,
+	setting_get_pos = function() return nil end,
+	settings = { get = function() return nil end },
 	log = function() end,
 	pos_to_string = function(p)
 		return string.format("(%0.2f, %0.2f, %0.2f)", p.x, p.y, p.z)

@@ -60,6 +60,9 @@ local core = {
 	get_item_group = function() return 0 end,
 	get_timeofday = function() return 0.5 end,
 	get_node_light = function() return 10 end,
+	is_protected = function() return false end,
+	setting_get_pos = function() return nil end,
+	settings = { get = function() return nil end },
 	log = function() end,
 }
 _G.core = core
