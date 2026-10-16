@@ -1340,7 +1340,7 @@ bprint(string.format(
 
 bprint("\n[SUCCESS] Luanti Mob Frameworks Multiplayer Performance Benchmark completed successfully.\n")
 
-local export_file = "benchmark_results.md"
+local export_file = os.getenv("BENCHMARK_OUT") or "benchmark_results.md"
 local f = io.open(export_file, "w")
 if f then
     f:write("# Luanti Mob Frameworks: Multiplayer Performance Benchmark Results\n\n")
