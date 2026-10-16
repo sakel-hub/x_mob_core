@@ -20,7 +20,6 @@ local registered_nodes = {
 
 local settings_store = {
 	x_mob_damage_particles = "mob_default",
-	x_mob_damage_particle_multiplier = "1.0",
 	x_mob_core_enable_health_bars = "true",
 	x_mob_core_health_bar_timeout = "4.0",
 	x_mob_core_health_bar_auto_remove = "true",

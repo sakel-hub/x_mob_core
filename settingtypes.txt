@@ -8,9 +8,6 @@
 # none: Completely disable damage particles for minimal performance impact.
 x_mob_damage_particles (Damage particle effect) enum mob_default mob_default,blood,smoke,ichor,spectral,sparks,none
 
-# Multiplier for combat damage particle count (0.0 to 3.0).
-x_mob_damage_particle_multiplier (Damage particle density) float 1.0 0.0 3.0
-
 # Enable overhead health bars for mobs when damaged
 x_mob_core_enable_health_bars (Enable Mob Health Bars) bool true
 
@@ -22,7 +19,3 @@ x_mob_core_health_bar_auto_remove (Auto-remove Inactive Health Bar Entities) boo
 
 # Enable responsive fullscreen HUD status screen vignettes (e.g. spores, void miasma)
 x_mob_core_enable_hud_vignettes (Enable HUD Status Vignettes) bool true
-
-# Prominence and opacity scaling multiplier for HUD status screen vignettes (0.5 to 2.5)
-# Increase for higher contrast and visibility during bright daylight conditions.
-x_mob_core_hud_vignette_opacity_multiplier (HUD Vignette Prominence Multiplier) float 1.0 0.5 2.5

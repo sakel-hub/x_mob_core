@@ -9,9 +9,6 @@ local effects = {}
 local FLASH_MODIFIER = "^[colorize:#FF000060"
 local REGEN_MODIFIER = "^[colorize:#FFFFFF60"
 local cached_global_mode = core.settings:get("x_mob_damage_particles") or "mob_default"
-local cached_mult = tonumber(core.settings:get("x_mob_damage_particle_multiplier")) or 1.0
-if cached_mult <= 0 then cached_mult = 0 end
-if cached_mult > 3.0 then cached_mult = 3.0 end
 
 --- Strips transient damage flash colorize modifiers from a texture modifier string
 ---@param mod? string Original texture modifier string
@@ -121,7 +118,7 @@ end
 --- Flashes the entity white briefly upon health regeneration for visual feedback.
 --- Yields precedence to active damage flashes and suppresses while dying.
 ---@param obj ObjectRef Entity object
----@param color? string Optional texture modifier overlay (default: "^[colorize:#FFFFFF60")
+---@param color? ColorSpec Optional texture modifier overlay or RGBA spec (default: "^[colorize:#FFFFFF60")
 ---@param duration? number Optional duration in seconds (default: 0.25)
 function effects.indicate_regen(obj, color, duration)
 	if not obj or not obj:is_valid() then return end
@@ -135,7 +132,12 @@ function effects.indicate_regen(obj, color, duration)
 		return
 	end
 
-	local mod_str = color or REGEN_MODIFIER
+	local mod_str = REGEN_MODIFIER
+	if type(color) == "string" then
+		mod_str = color
+	elseif type(color) == "table" and color.r and color.g and color.b then
+		mod_str = string.format("^[colorize:#%02X%02X%02X%02X", color.r, color.g, color.b, color.a or 96)
+	end
 	local dur = duration or 0.25
 
 	if ent then
@@ -272,7 +274,7 @@ local PRESET_DEFAULTS = {
 }
 
 --- Spawns contextual, directional damage particles when an entity is damaged.
---- Configurable globally via `x_mob_damage_particles` and `x_mob_damage_particle_multiplier`,
+--- Configurable globally via `x_mob_damage_particles`,
 --- or per-mob via `def.damage_effect`. Can be disabled by setting `damage_effect = false`,
 --- `damage_effect = "none"`, or `{ enabled = false }` / `{ type = "none" }`.
 ---@param obj ObjectRef Entity object receiving damage
@@ -307,13 +309,13 @@ function effects.spawn_damage_particles(obj, puncher, dir, damage, def)
 	local global_mode = cached_global_mode
 	if global_mode == "none" then return end
 
-	local mult = cached_mult
-	if mult <= 0 then return end
-
 	-- Mob definition configuration
 	local mob_conf = (type(raw_conf) == "table") and raw_conf or ((type(raw_conf) == "string") and {type = raw_conf} or {})
 	local effect_type = (global_mode ~= "mob_default") and global_mode or (mob_conf.type or "blood")
 	if effect_type == "none" then return end
+
+	local mult = mob_conf.multiplier or 1.0
+	if mult <= 0 then return end
 
 	-- Look up preset in core defaults
 	local preset = PRESET_DEFAULTS[effect_type]

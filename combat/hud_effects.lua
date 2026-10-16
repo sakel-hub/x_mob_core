@@ -19,8 +19,7 @@ local DEFAULT_BASE_TEXTURE = "x_mob_core_vignette.png"
 
 --- Global settings cache
 local vignettes_enabled = core.settings:get_bool("x_mob_core_enable_hud_vignettes", true)
-local raw_multiplier = core.settings.get and core.settings:get("x_mob_core_hud_vignette_opacity_multiplier")
-local vignette_multiplier = tonumber(raw_multiplier) or 1.0
+local vignette_multiplier = 1.0
 
 --- 3rd-party custom vignette preset registry
 --- Key: effect_id string -> VignetteConfig
