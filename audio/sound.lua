@@ -148,13 +148,14 @@ function sound.play(self, sound_type, overrides)
 		params.object = target_object
 	elseif target_pos then
 		params.pos = target_pos
-	else
+	elseif not (overrides and (overrides.to_player or overrides.to_player_name)) then
 		-- Safety safeguard: NEVER broadcast globally without spatial anchor
 		return nil
 	end
 
 	if overrides then
-		if overrides.to_player then params.to_player = overrides.to_player end
+		local to_player = overrides.to_player or overrides.to_player_name
+		if to_player then params.to_player = to_player end
 		if overrides.exclude_player then params.exclude_player = overrides.exclude_player end
 		if overrides.loop ~= nil then params.loop = overrides.loop end
 		if overrides.fade ~= nil then params.fade = overrides.fade end

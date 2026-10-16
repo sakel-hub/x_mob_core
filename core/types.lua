@@ -958,6 +958,7 @@
 ---@field pos? Vector World coordinate override for sound emitter
 ---@field object? ObjectRef Entity ObjectRef override to attach sound playback to
 ---@field to_player? string Play sound privately to a single connected player name
+---@field to_player_name? string Play sound privately to a single connected player name (alias for to_player)
 ---@field loop? boolean Whether audio track loops indefinitely until stopped
 
 -- =========================================================================
