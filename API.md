@@ -39,8 +39,8 @@ Active status effect runtime tracking record on an afflicted player or entity.
 | `damage_multiplier` | `number?` | Incoming damage multiplier while afflicted (e.g. 1.35 for brittle, 0.6 for ironhide) |
 | `damage_type` | `string?` | Damage group name for DoT (default: "fleshy") |
 | `drain_hunger` | `number?` | Hunger or stamina units drained per tick via hunger_adapter |
-| `duration` | `number` | Duration in seconds |
-| `envelop` | `EnvelopConfig?` | Visual envelop configuration |
+| `duration` | `number?` | Duration in seconds |
+| `envelop` | `(boolean\|EnvelopConfig)?` | Visual envelop configuration |
 | `envelop_texture` | `string?` | Visual envelop sleeve texture asset |
 | `fov_duration` | `number?` | Optional sub-duration for FOV effect in seconds (defaults to effect duration) |
 | `fov_factor` | `number?` | Camera FOV multiplier (e.g. 0.85 for shockwave / tunnel vision) |
@@ -59,6 +59,8 @@ Active status effect runtime tracking record on an afflicted player or entity.
 | `on_tick` | `fun(target: ObjectRef)?` | Callback on periodic DoT/HoT tick (e.g. particle spawner) |
 | `particle_spawner` | `(ParticleSpawnerDef\|fun(target: ObjectRef):ParticleSpawnerDef)?` | Particle spawner definition or generator callback for periodic ticks. |
 | `penetrate_armor` | `boolean?` | Whether DoT bypasses armor damage reduction (default: true) |
+| `spawner_id` | `integer?` | Particle spawner identifier |
+| `spawner_playername` | `string?` | Player name for player-bound particle spawner |
 | `speed_factor` | `number?` | Movement speed fractional multiplier (e.g. 0.5 for 50% slow, 1.35 for haste) |
 | `target` | `ObjectRef` | Target entity or player |
 | `thorns` | `ThornsDef?` | Reactive thorns on melee attackers |
@@ -90,7 +92,7 @@ Periodic radius aura pulse specification applied to pack followers or nearby all
 | `radius` | `number?` | Pulse effect radius in blocks (default: 16.0) |
 | `sound` | `string?` | Audio cue played at caster position |
 | `target` | `("allies"\|"pack_followers"\|"self")?` | Beneficiary selector (default: "pack_followers") |
-| `vfx` | `(string\|fun(pos: Vector))?` | Visual effect trigger or callback |
+| `vfx` | `(string\|fun(pos: Vector, self?: MobEntity))?` | Visual effect trigger or callback |
 
 ### `CollisionInfo`
 
@@ -260,6 +262,26 @@ Declarative health regeneration and tactical retreat configuration.
 | `safe_distance` | `number?` | Safe distance to halt sprint and channel heal (default: 10.0m; ignored if unlimited_flee is true). |
 | `unlimited_flee` | `boolean?` | Continuous sprint without burst timeout or channel halt (ignores burst/channel durations). |
 
+### `LocomotionStatus`
+
+Locomotion status returned by motor AI step routines.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `has_los` | `boolean` | Whether line-of-sight to target is unobstructed |
+| `moving` | `boolean` | Whether entity is currently in physical motion |
+| `speed` | `number` | Current movement speed in nodes/second |
+
+### `MapNode`
+
+Engine map node table containing technical node name and param values.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `name` | `string` | Technical node name (e.g. "default:stone") |
+| `param1` | `integer?` | Light level or liquid flow level (0-255) |
+| `param2` | `integer?` | Wallmounted/facedir orientation or metadata (0-255) |
+
 ### `MeleeAttackDef`
 
 Individual melee attack profile for declarative single or multi-attack combat.
@@ -374,7 +396,7 @@ Periodic radial aura emitted by mob commanders or totems.
 | `radius` | `number?` | Spatial radius in nodes (default: 16.0) |
 | `sound` | `string?` | Audio cue played at caster position |
 | `target` | `("allies"\|"pack_followers"\|"self")?` | Target filter selector (default: "pack_followers") |
-| `vfx` | `(string\|fun(pos: Vector))?` | Declarative VFX preset or callback |
+| `vfx` | `(string\|fun(pos: Vector, self?: MobEntity))?` | Declarative VFX preset or callback |
 
 ### `MobBoneDef`
 
@@ -732,7 +754,7 @@ combat tuning, AI navigation, and lifecycle callback configuration.
 | `nametag_bgcolor` | `(string\|{ r: integer, g: integer, b: integer, a: integer })?` | Overhead nametag background color |
 | `nametag_color` | `(string\|{ r: integer, g: integer, b: integer, a: integer })?` | Overhead nametag text color |
 | `on_action_end` | `fun(self: MobEntity)?` | Callback executed when action_timer completes |
-| `on_activate` | `fun(self: MobEntity, staticdata: string, dtime_s: number, raw?: string)?` | Called on activation |
+| `on_activate` | `fun(self: MobEntity, staticdata?: string\|table, dtime_s?: number, raw?: string\|table)?` | Callback invoked when entity activates. |
 | `on_deactivate` | `fun(self: MobEntity, removal: boolean)?` | Called when entity is unloaded or removed |
 | `on_death` | `fun(self: MobEntity, killer: ObjectRef\|nil)?` | Callback invoked when entity dies |
 | `on_despawn` | `fun(self: MobEntity, reason?: string)?` | Callback when entity despawns gracefully |
@@ -741,7 +763,7 @@ combat tuning, AI navigation, and lifecycle callback configuration.
 | `on_regen_step` | `fun(self: MobEntity, hp_added: number)?` | Optional callback executed on each health regeneration step. |
 | `on_return_to_fight` | `fun(self: MobEntity)?` | Optional callback executed when mob recovers HP and exits fleeing |
 | `on_rightclick` | `(fun(self: MobEntity, clicker: ObjectRef):any)?` | Callback invoked when entity is right-clicked |
-| `on_step` | `fun(self: MobEntity, dtime: number, moveresult?: EngineMoveResult)?` | Callback on each physics and logic step. |
+| `on_step` | `fun(self: MobEntity, dtime: number, moveresult?: EngineMoveResult)?` |  |
 | `pack` | `MobPackDef?` | Pack and squad coordination options |
 | `perform_attack` | `fun(self: MobEntity, target: ObjectRef, dir: Vector)?` | Custom melee attack callback |
 | `physical` | `boolean?` | Whether entity is subject to physical collisions (default: true) |
@@ -826,7 +848,7 @@ Reactive HP threshold trigger for boss phase shifts or rage mechanics.
 | `id` | `string?` | Unique threshold identifier |
 | `once` | `boolean?` | Whether this triggers only once per spawn lifecycle (default: true) |
 | `sound` | `string?` | Audio cue played on trigger |
-| `vfx` | `(string\|fun(pos: Vector))?` | Visual effect trigger or callback |
+| `vfx` | `(string\|fun(pos: Vector, self?: MobEntity))?` | Visual effect trigger or callback |
 
 ### `MobTriggerDef`
 
@@ -841,7 +863,49 @@ Event-driven reaction triggered by taking damage.
 | `id` | `string?` | Unique trigger identifier |
 | `sound` | `string?` | Audio cue played on trigger |
 | `threshold_damage` | `number?` | Damage threshold for on_heavy_damage (default: 25% max HP) |
-| `vfx` | `(string\|fun(pos: Vector))?` | Visual effect trigger or callback |
+| `vfx` | `(string\|fun(pos: Vector, self?: MobEntity))?` | Visual effect trigger or callback |
+
+### `ObjectRef`
+
+Luanti ObjectRef userdata representing an active entity or connected player.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `get_acceleration` | `fun(self: ObjectRef):Vector\|nil` |  |
+| `get_armor_groups` | `fun(self: ObjectRef):table<string, number>` |  |
+| `get_attach` | `fun(self: ObjectRef):ObjectRef\|nil` |  |
+| `get_bone_position` | `fun(self: ObjectRef, bone: string):Vector, Vector` |  |
+| `get_hp` | `fun(self: ObjectRef):number` |  |
+| `get_look_horizontal` | `fun(self: ObjectRef):number` |  |
+| `get_look_vertical` | `fun(self: ObjectRef):number` |  |
+| `get_luaentity` | `fun(self: ObjectRef):table\|MobEntity\|nil` |  |
+| `get_nametag_attributes` | `fun(self: ObjectRef):table` |  |
+| `get_physics_override` | `fun(self: ObjectRef):table` |  |
+| `get_player_name` | `fun(self: ObjectRef):string` |  |
+| `get_pos` | `fun(self: ObjectRef):Vector\|nil` |  |
+| `get_properties` | `fun(self: ObjectRef):table` |  |
+| `get_velocity` | `fun(self: ObjectRef):Vector\|nil` |  |
+| `get_wielded_item` | `fun(self: ObjectRef):table` |  |
+| `get_yaw` | `fun(self: ObjectRef):number` |  |
+| `hud_add` | `fun(self: ObjectRef, def: table):integer` |  |
+| `hud_change` | `fun(self: ObjectRef, id: integer, stat: string, value: any)` |  |
+| `hud_remove` | `fun(self: ObjectRef, id: integer)` |  |
+| `is_player` | `fun(self: ObjectRef):boolean` |  |
+| `is_valid` | `fun(self: ObjectRef):boolean` |  |
+| `punch` | `function` | Punches entity with tool capabilities and damage groups |
+| `remove` | `fun(self: ObjectRef)` |  |
+| `set_acceleration` | `fun(self: ObjectRef, acc: Vector)` |  |
+| `set_armor_groups` | `fun(self: ObjectRef, groups: table<string, number>)` |  |
+| `set_attach` | `function` | Attaches entity to parent ObjectRef at specified bone and offset |
+| `set_bone_position` | `fun(self: ObjectRef, bone: string, position?: Vector, rotation?: Vector)` |  |
+| `set_detach` | `fun(self: ObjectRef)` |  |
+| `set_hp` | `fun(self: ObjectRef, hp: number, reason?: any)` |  |
+| `set_nametag_attributes` | `fun(self: ObjectRef, attributes: table)` |  |
+| `set_physics_override` | `fun(self: ObjectRef, overrides: table)` |  |
+| `set_pos` | `fun(self: ObjectRef, pos: Vector)` |  |
+| `set_properties` | `fun(self: ObjectRef, props: table)` |  |
+| `set_velocity` | `fun(self: ObjectRef, vel: Vector)` |  |
+| `set_yaw` | `fun(self: ObjectRef, yaw: number)` |  |
 
 ### `PackBuffOptions`
 
@@ -852,7 +916,7 @@ Configuration options for pulsing or applying buffs to pack members via x_mob_co
 | `include_leader` | `boolean?` | Whether the buff applies to the leader in addition to followers (default: true) |
 | `max_targets` | `integer?` | Maximum number of pack entities affected (default: all) |
 | `sound` | `string?` | Audio cue played at caster position |
-| `vfx` | `(string\|fun(pos: Vector))?` | Visual effect trigger or callback |
+| `vfx` | `(string\|fun(pos: Vector, self?: MobEntity))?` | Visual effect trigger or callback |
 
 ### `ParticleSpawnerDef`
 
@@ -921,6 +985,19 @@ Automatically cancels if mob dies, despawns, or transitions into flinching.
 | `callback` | `fun(self: MobEntity)` | Callback executed when timer completes |
 | `tag` | `string` | Unique action tag for debugging and cancellation |
 | `timer` | `number` | Remaining seconds before callback fires |
+
+### `ShoalCollisionPadding`
+
+Collision padding boundaries for shoal members.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `max_x` | `number` | Positive X boundary padding |
+| `max_y` | `number` | Positive Y boundary padding |
+| `max_z` | `number` | Positive Z boundary padding |
+| `min_x` | `number` | Negative X boundary padding |
+| `min_y` | `number` | Negative Y boundary padding |
+| `min_z` | `number` | Negative Z boundary padding |
 
 ### `ShoalConfigDef`
 
@@ -1120,8 +1197,8 @@ Status effect specification table configuring buffs, debuffs, DoTs, roots, and v
 | `damage_multiplier` | `number?` | Incoming damage multiplier while afflicted (e.g. 1.35 for brittle, 0.6 for ironhide) |
 | `damage_type` | `string?` | Damage group name for DoT (default: "fleshy") |
 | `drain_hunger` | `number?` | Hunger or stamina units drained per tick via hunger_adapter |
-| `duration` | `number` | Duration in seconds |
-| `envelop` | `EnvelopConfig?` | Visual envelop configuration |
+| `duration` | `number?` | Duration in seconds |
+| `envelop` | `(boolean\|EnvelopConfig)?` | Visual envelop configuration |
 | `envelop_texture` | `string?` | Visual envelop sleeve texture asset |
 | `fov_duration` | `number?` | Optional sub-duration for FOV effect in seconds (defaults to effect duration) |
 | `fov_factor` | `number?` | Camera FOV multiplier (e.g. 0.85 for shockwave / tunnel vision) |
@@ -1157,6 +1234,16 @@ Optional field overrides when applying a status effect preset via x_mob_core.app
 | `heal` | `number?` | Health restored per tick override for HoTs |
 | `level` | `integer?` | Effect intensity tier or amplifier level |
 | `speed_factor` | `number?` | Speed multiplier override |
+
+### `SurfaceInfo`
+
+Surface contact information evaluated by surface climbing subsystem.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `has_surface` | `boolean` | Whether an adjacent surface was detected |
+| `normal` | `Vector` | Contact surface normal vector |
+| `surface_type` | `string\|"ceiling"\|"floor"\|"wall"` | Classification of detected surface |
 
 ### `SwarmAlertDef`
 
@@ -1248,6 +1335,16 @@ Node group capability specification inside ToolCapabilities.
 | `times` | `number[]?` | Digging times in seconds indexed by group level |
 | `uses` | `integer?` | Maximum uses before tool breaking (wear per use = 65535 / uses) |
 
+### `Vector`
+
+3D Cartesian coordinate vector in Luanti node units.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `x` | `number` | X coordinate |
+| `y` | `number` | Y coordinate |
+| `z` | `number` | Z coordinate |
+
 ### `VignetteConfig`
 
 Fullscreen responsive screen vignette configuration.
@@ -1272,6 +1369,7 @@ Fullscreen responsive screen vignette configuration.
 | `CustomStepHandler` | `fun(self: MobEntity, dt: number, res?: EngineMoveResult, def?: MobRegistrationDef):boolean?` | Pre-combat custom ability interception hook handler. Executed at Priority 15 in the middleware pipeline prior to declarative melee and shooter logic. Return `true` to halt the pipeline (e.g. while casting spells, summoning minions, in tactical standoff). Return `false` or `nil` to fall through into standard declarative melee and ranged attacks. |
 | `DamageGroups` | `table<string, number>` | Luanti damage groups mapping group names (e.g. `"fleshy"`) to raw damage points dealt by weapons. |
 | `EventListenerCallback` | `fun(...any)` | Callback function invoked when a pub-sub event is emitted on the event bus. |
+| `MobAbilities` | `MobMovementDef` | Movement abilities and environmental capabilities for pathfinding and safety checks. |
 | `MobPunchCallback` | `fun(self: MobEntity, src: ObjectRef, tflp: number, caps: ToolCapabilities, dir: Vector, dmg: number)` | Callback invoked when an entity is punched by a player or another entity. |
 | `MobStateType` | `string\|"attacking"\|"combat"\|"dying"\|"fleeing"...(+6)` | Canonical state machine states coordinating mob behavior, animation, and locomotion. |
 | `PathfindingCallback` | `fun(path: Vector[]\|nil)` | Callback function invoked when an asynchronous A* path search completes. Receives an array of solved 3D waypoint vectors on success, or `nil` if unreachable. |
@@ -1657,7 +1755,7 @@ Advances directional steering locomotion towards destination or target entity.
 
 ```lua
 function x_mob_core.step_move_or_idle(self: MobEntity, dtime: number, move_anim?: string, anim_speed?: number, idle_anim?: string)
-  -> is_moving: boolean
+  -> nav: LocomotionStatus|nil
 ```
 
 **Parameters:**
@@ -1670,7 +1768,7 @@ function x_mob_core.step_move_or_idle(self: MobEntity, dtime: number, move_anim?
 
 **Returns:**
 
-* `is_moving` (`boolean`): Whether the mob is actively moving
+* `nav` (`LocomotionStatus|nil`): Navigation state
 
 #### `x_mob_core.step_tactical_retreat`
 
@@ -1698,7 +1796,7 @@ Advances ambient idle or wandering locomotion state for an entity.
 
 ```lua
 function x_mob_core.step_wander_or_idle(self: MobEntity, dtime: number, walk_anim?: string, idle_anim?: string)
-  -> is_moving: boolean
+  -> nav: LocomotionStatus|nil
 ```
 
 **Parameters:**
@@ -1710,7 +1808,7 @@ function x_mob_core.step_wander_or_idle(self: MobEntity, dtime: number, walk_ani
 
 **Returns:**
 
-* `is_moving` (`boolean`): Whether the mob is currently walking
+* `nav` (`LocomotionStatus|nil`): Navigation state
 
 ---
 
@@ -1791,7 +1889,7 @@ function x_mob_core.adopt_nearby_orphans(leader_self: MobEntity, search_radius?:
 
 **Returns:**
 
-* `count` (`integer`): Number of orphans adopted
+* `count` (`integer`): Total count of followers in pack after adoption
 
 #### `x_mob_core.alert_nearby_allies`
 
@@ -2478,6 +2576,19 @@ function x_mob_core.is_projectile(ent: LuaEntitySAO|MobEntity)
 
 * `is_projectile` (`boolean`): True if entity has projectile markers
 
+#### `x_mob_core.is_secondary_punch`
+
+Checks whether execution is currently inside an internal secondary punch (e.g. DoT tick or thorns).
+
+```lua
+function x_mob_core.is_secondary_punch()
+  -> is_secondary: boolean
+```
+
+**Returns:**
+
+* `is_secondary` (`boolean`): True if punch was triggered by DoT or damage reflection
+
 #### `x_mob_core.is_valid_projectile_target`
 
 Validates whether an object is a targetable enemy for a projectile or shooter mob.
@@ -2515,6 +2626,14 @@ function x_mob_core.perform_melee_attack(self: MobEntity, target: ObjectRef, dir
 * `def` (`MobRegistrationDef?`): Mob definition table
 * `m_cfg` (`MeleeConfigDef?`): Melee configuration table override
 
+#### `x_mob_core.pop_secondary_punch`
+
+Pops secondary punch recursion guard depth.
+
+```lua
+function x_mob_core.pop_secondary_punch()
+```
+
 #### `x_mob_core.predict_aim`
 
 Predicts target intercept position and direction based on target velocity and projectile speed.
@@ -2536,6 +2655,14 @@ function x_mob_core.predict_aim(origin: Vector, tgt_pos: Vector, tgt_vel?: Vecto
 
 * `predicted_pos` (`Vector`): Predicted intercept position
 * `dir` (`Vector`): Normalized direction vector towards predicted position
+
+#### `x_mob_core.push_secondary_punch`
+
+Pushes secondary punch recursion guard depth.
+
+```lua
+function x_mob_core.push_secondary_punch()
+```
 
 #### `x_mob_core.show_health_bar`
 
@@ -3127,16 +3254,11 @@ Removes all active effects and detaches/removes envelop entity from target.
 
 ```lua
 function x_mob_core.remove_envelop(target: ObjectRef)
-  -> nil
 ```
 
 **Parameters:**
 
 * `target` (`ObjectRef`): Target player or entity
-
-**Returns:**
-
-* `nil`
 
 #### `x_mob_core.remove_envelop_effect`
 
@@ -3144,17 +3266,12 @@ Removes a specific active effect from target's envelop, preserving remaining eff
 
 ```lua
 function x_mob_core.remove_envelop_effect(target: ObjectRef, effect_id: string)
-  -> nil
 ```
 
 **Parameters:**
 
 * `target` (`ObjectRef`): Target player or entity
 * `effect_id` (`string`): Unique effect ID to remove
-
-**Returns:**
-
-* `nil`
 
 #### `x_mob_core.remove_status_effect`
 
@@ -3547,6 +3664,33 @@ function x_mob_core.unlisten(event_name: string|"on_mob_death"|"on_mob_despawn"|
 **Returns:**
 
 * `success` (`boolean`): True if listener was found and removed
+
+---
+
+## Miscellaneous Functions
+
+#### `x_mob_core.check_crystallize_shatter`
+
+```lua
+function
+```
+
+#### `x_mob_core.has_anti_heal`
+
+Checks if target is currently affected by anti-healing status effects.
+
+```lua
+function x_mob_core.has_anti_heal(target: ObjectRef)
+  -> has_anti_heal: boolean
+```
+
+**Parameters:**
+
+* `target` (`ObjectRef`): Target player or entity
+
+**Returns:**
+
+* `has_anti_heal` (`boolean`): True if target has an active anti-heal status effect
 
 ---
 
