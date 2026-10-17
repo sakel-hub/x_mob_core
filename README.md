@@ -373,3 +373,14 @@ npm run test:perf
 | **Network Egress Bandwidth** | `6582.49 KB/s` | `7238.99 KB/s` | **`5395.46 KB/s`** | **18.0% to 25.5% bandwidth reduction** |
 
 For complete multi-scenario tables (Concurrency Scaling, Entity Density, Obstacle Stress, and Distance LOD), see [benchmark_results.md](benchmark_results.md).
+
+---
+
+## AI Transparency & Assistance Statement
+
+This package adheres to an **AI-Assisted** development model under strict human authorship and editorial control:
+
+- **Human Creative Authority & Codebase**: All software architecture, gameplay mechanics, core algorithms, and mod logic are authored, designed, and directed by a human developer.
+- **Administrative & Tooling Scope**: AI tools are utilized strictly in an auxiliary capacity for administrative workflows, repository maintenance (e.g., changelogs, commit formatting), documentation drafting, and test-case structuring.
+- **Zero Synthetic Media**: Generative AI is **not** used to produce textures, sprites, 3D meshes/models, audio, or visual assets. All media files are created or attributed to original human artists under valid open licenses.
+- **Verification & Responsibility**: Every line of code, configuration, and documentation is manually inspected, tested, and validated by the maintainer, who retains full copyright and legal responsibility for the package.
